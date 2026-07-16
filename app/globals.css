@@ -1,0 +1,38 @@
+@import "tailwindcss";
+
+:root {
+  --wa-header: #008069;
+  --wa-bg: #efeae2;
+  --wa-panel: #ffffff;
+  --wa-bubble-out: #d9fdd3;
+  --wa-bubble-in: #ffffff;
+  --wa-text: #111b21;
+  --wa-text-muted: #667781;
+  --wa-accent: #25d366;
+  --wa-check: #53bdeb;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --wa-header: #202c33;
+    --wa-bg: #0b141a;
+    --wa-panel: #111b21;
+    --wa-bubble-out: #005c4b;
+    --wa-bubble-in: #202c33;
+    --wa-text: #e9edef;
+    --wa-text-muted: #8696a0;
+  }
+}
+
+html, body {
+  height: 100%;
+  background: var(--wa-bg);
+  color: var(--wa-text);
+  overscroll-behavior-y: none;
+}
+
+.chat-bg {
+  background-color: var(--wa-bg);
+  background-image: radial-gradient(color-mix(in srgb, var(--wa-text) 4%, transparent) 1px, transparent 1px);
+  background-size: 22px 22px;
+}
