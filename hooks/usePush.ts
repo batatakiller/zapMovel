@@ -32,15 +32,17 @@ export function usePush() {
   }, []);
 
   const enable = useCallback(async () => {
-    if (!("PushManager" in window) || !("Notification" in window)) {
-      const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
-      const standalone =
-        window.matchMedia("(display-mode: standalone)").matches || (navigator as any).standalone;
-      alert(
-        isIOS && !standalone
-          ? "No iPhone as notificações só funcionam com o app instalado:\n\n1. Toque em Compartilhar (□↑) no Safari\n2. 'Adicionar à Tela de Início'\n3. Abra o ZapMóvel pelo ícone novo\n4. Toque no sino de novo\n\n(Requer iOS 16.4 ou superior)"
-          : "Este navegador não suporta notificações push. Tente o Chrome (Android) ou instale o app na tela de início."
-      );
+    if (typeof window === "undefined" || !("PushManager" in window) || !("Notification" in window)) {
+      if (typeof window !== "undefined" && typeof navigator !== "undefined") {
+        const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
+        const w = window as any;
+        const standalone = (w.matchMedia?.("(display-mode: standalone)").matches ?? false) || (navigator as any).standalone;
+        alert(
+          isIOS && !standalone
+            ? "No iPhone as notificações só funcionam com o app instalado:\n\n1. Toque em Compartilhar (□↑) no Safari\n2. 'Adicionar à Tela de Início'\n3. Abra o ZapMóvel pelo ícone novo\n4. Toque no sino de novo\n\n(Requer iOS 16.4 ou superior)"
+            : "Este navegador não suporta notificações push. Tente o Chrome (Android) ou instale o app na tela de início."
+        );
+      }
       return;
     }
     try {
