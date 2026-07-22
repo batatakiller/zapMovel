@@ -1,5 +1,5 @@
 import { supabaseAdmin } from "./supabase-server";
-import { normalizeUpsert, normalizeStatus, ZapRow, jidToPhone } from "./normalize";
+import { normalizeUpsert, normalizeStatus, extractReaction, ZapRow, ReactionRow, jidToPhone } from "./normalize";
 import { sendPushToAll } from "./push";
 import { cacheMediaForRow } from "./media-cache";
 
@@ -12,8 +12,22 @@ export async function ingestEvent(event: string, instance: string, data: any): P
 
   if (ev === "messages.upsert" || ev === "send.message") {
     const items = Array.isArray(data) ? data : [data];
-    const rows = items
-      .map((m: any) => normalizeUpsert(instance, m.messages?.[0] ?? m))
+    const rawMsgs = items.map((m: any) => m.messages?.[0] ?? m);
+
+    // reações são um evento de mensagem à parte — vão para zap_reactions,
+    // nunca viram uma linha normal em zap_messages
+    const reactions = rawMsgs
+      .map((m: any) => extractReaction(instance, m))
+      .filter((r: ReactionRow | null): r is ReactionRow => r !== null);
+    if (reactions.length) {
+      const { error } = await db
+        .from("zap_reactions")
+        .upsert(reactions, { onConflict: "instance,target_message_id,reactor_jid" });
+      if (error) console.error("upsert zap_reactions:", error.message);
+    }
+
+    const rows = rawMsgs
+      .map((m: any) => normalizeUpsert(instance, m))
       .filter((r: ZapRow | null): r is ZapRow => r !== null);
     if (!rows.length) return;
     const { error } = await db

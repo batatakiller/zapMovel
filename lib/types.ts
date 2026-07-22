@@ -9,6 +9,18 @@ export type ZapMessage = {
   content: string | null;
   status: string;
   msg_timestamp: string;
+  quoted_message_id?: string | null;
+};
+
+export type Reaction = {
+  id: number;
+  instance: string;
+  remote_jid: string;
+  target_message_id: string;
+  reactor_jid: string;
+  from_me: boolean;
+  emoji: string | null;
+  msg_timestamp: string;
 };
 
 export type Account = {

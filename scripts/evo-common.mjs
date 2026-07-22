@@ -80,11 +80,20 @@ function extractContent(msg) {
   if (!msg) return { type: "other", content: null };
   if (msg.conversation) return { type: "text", content: msg.conversation };
   if (msg.extendedTextMessage?.text) return { type: "text", content: msg.extendedTextMessage.text };
-  if (msg.reactionMessage) return { type: "reaction", content: `Reagiu com ${msg.reactionMessage.text ?? "👍"}` };
   for (const [k, [type, label]] of Object.entries(TYPE_MAP)) {
     if (msg[k]) return { type, content: msg[k]?.caption ? `${label} — ${msg[k].caption}` : label };
   }
   return { type: "other", content: `[${Object.keys(msg)[0] ?? "?"}]` };
+}
+
+// espelha lib/normalize.ts#extractQuotedId
+function extractQuotedId(msg) {
+  if (!msg) return null;
+  for (const key of Object.keys(msg)) {
+    const stanzaId = msg[key]?.contextInfo?.stanzaId;
+    if (stanzaId) return stanzaId;
+  }
+  return null;
 }
 
 function canonicalJid(key) {
@@ -94,10 +103,32 @@ function canonicalJid(key) {
   return jid.replace(/:\d+@/, "@");
 }
 
+// espelha lib/normalize.ts#extractReaction — reações vão para zap_reactions,
+// nunca viram uma linha normal em zap_messages
+export function extractReaction(data, instance = INSTANCE) {
+  const reaction = data?.message?.reactionMessage;
+  const targetId = reaction?.key?.id;
+  if (!targetId) return null;
+  const jid = canonicalJid(data.key);
+  if (!jid) return null;
+  const fromMe = !!data.key?.fromMe;
+  const ts = data.messageTimestamp ? new Date(Number(data.messageTimestamp) * 1000) : new Date();
+  return {
+    instance,
+    remote_jid: jid,
+    target_message_id: targetId,
+    reactor_jid: fromMe ? "me" : data.key?.participant ?? jid,
+    from_me: fromMe,
+    emoji: reaction.text?.trim() || null,
+    msg_timestamp: ts.toISOString(),
+  };
+}
+
 export function normalizeUpsert(data, instance = INSTANCE) {
   const key = data?.key;
   const jid = canonicalJid(key);
   if (!jid || !key?.id || jid === "status@broadcast") return null;
+  if (data.message?.reactionMessage) return null; // tratado por extractReaction
   const { type, content } = extractContent(data.message);
   const ts = data.messageTimestamp ? new Date(Number(data.messageTimestamp) * 1000) : new Date();
   return {
@@ -110,6 +141,7 @@ export function normalizeUpsert(data, instance = INSTANCE) {
     content,
     status: key.fromMe ? normStatus(data.status ?? "sent") : "received",
     msg_timestamp: ts.toISOString(),
+    quoted_message_id: extractQuotedId(data.message),
     raw: data,
   };
 }
@@ -124,6 +156,18 @@ export async function upsertRows(rows) {
   const { error } = await supabase
     .from("zap_messages")
     .upsert(valid, { onConflict: "instance,message_id" });
+  if (error) throw new Error(error.message);
+  return valid.length;
+}
+
+export async function upsertReactions(rows) {
+  const byId = new Map();
+  for (const r of rows) if (r) byId.set(`${r.instance}|${r.target_message_id}|${r.reactor_jid}`, r);
+  const valid = [...byId.values()];
+  if (!valid.length) return 0;
+  const { error } = await supabase
+    .from("zap_reactions")
+    .upsert(valid, { onConflict: "instance,target_message_id,reactor_jid" });
   if (error) throw new Error(error.message);
   return valid.length;
 }

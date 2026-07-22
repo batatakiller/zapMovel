@@ -19,8 +19,11 @@ import { supabaseBrowser } from "@/lib/supabase-browser";
 import { useSession } from "@/hooks/useSession";
 import { useAccounts } from "@/hooks/useAccounts";
 import { useQuickReplies } from "@/hooks/useQuickReplies";
+import { useReactions } from "@/hooks/useReactions";
 import { jidToPhone } from "@/lib/normalize";
 import type { ZapMessage } from "@/lib/types";
+
+const REACT_EMOJIS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
 
 async function markAsRead(jid: string, instance: string, messages: ZapMessage[]) {
   const unreadMessages = messages.filter((m) => !m.from_me && m.status !== "read");
@@ -61,6 +64,12 @@ function dayLabel(ts: string): string {
   return d.toLocaleDateString("pt-BR");
 }
 
+function quotedPreviewText(m: ZapMessage): string {
+  if (m.type === "image" || m.type === "sticker") return m.content || "📷 Foto";
+  if (m.type === "audio") return "🎤 Áudio";
+  return m.content ?? "";
+}
+
 export default function ChatPage({ params }: { params: Promise<{ instance: string; jid: string }> }) {
   const { instance: encInstance, jid: encoded } = use(params);
   const instance = decodeURIComponent(encInstance);
@@ -68,10 +77,13 @@ export default function ChatPage({ params }: { params: Promise<{ instance: strin
   const ready = useSession();
   const { byInstance } = useAccounts();
   const { replies: quickReplies } = useQuickReplies();
+  const { byMessage: reactionsByMessage } = useReactions(instance, jid);
   const [messages, setMessages] = useState<ZapMessage[]>([]);
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [showPicker, setShowPicker] = useState(false);
+  const [replyingTo, setReplyingTo] = useState<ZapMessage | null>(null);
+  const [reactPickerFor, setReactPickerFor] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textInputRef = useRef<HTMLInputElement>(null);
   const name = messages.find((m) => !m.from_me && m.push_name)?.push_name ?? jidToPhone(jid);
@@ -92,10 +104,37 @@ export default function ChatPage({ params }: { params: Promise<{ instance: strin
     textInputRef.current?.focus();
   }
 
+  function startReply(m: ZapMessage) {
+    setReplyingTo(m);
+    setReactPickerFor(null);
+    textInputRef.current?.focus();
+  }
+
+  async function handleReact(m: ZapMessage, emoji: string) {
+    setReactPickerFor(null);
+    const mine = reactionsByMessage.get(m.message_id)?.find((r) => r.from_me)?.emoji;
+    const nextEmoji = mine === emoji ? "" : emoji; // clicar de novo no mesmo emoji remove
+    try {
+      await fetch("/api/react", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jid,
+          instance,
+          targetMessageId: m.message_id,
+          targetFromMe: m.from_me,
+          emoji: nextEmoji,
+        }),
+      });
+    } catch (e) {
+      console.error("Erro ao reagir:", e);
+    }
+  }
+
   const load = useCallback(async () => {
     const { data } = await supabaseBrowser()
       .from("zap_messages")
-      .select("id,instance,remote_jid,message_id,from_me,push_name,type,content,status,msg_timestamp")
+      .select("id,instance,remote_jid,message_id,from_me,push_name,type,content,status,msg_timestamp,quoted_message_id")
       .eq("instance", instance)
       .eq("remote_jid", jid)
       .order("msg_timestamp", { ascending: true })
@@ -147,6 +186,8 @@ export default function ChatPage({ params }: { params: Promise<{ instance: strin
     if (!body || sending) return;
     setSending(true);
     setText("");
+    const quotedMessageId = replyingTo?.message_id ?? null;
+    setReplyingTo(null);
 
     const tempId = `local-${Date.now()}`;
     const optimistic: ZapMessage = {
@@ -160,6 +201,7 @@ export default function ChatPage({ params }: { params: Promise<{ instance: strin
       content: body,
       status: "pending",
       msg_timestamp: new Date().toISOString(),
+      quoted_message_id: quotedMessageId,
     };
     setMessages((prev) => [...prev, optimistic]);
 
@@ -167,7 +209,7 @@ export default function ChatPage({ params }: { params: Promise<{ instance: strin
       const res = await fetch("/api/send", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ jid, instance, text: body }),
+        body: JSON.stringify({ jid, instance, text: body, quotedMessageId }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error);
@@ -234,6 +276,12 @@ export default function ChatPage({ params }: { params: Promise<{ instance: strin
           const day = dayLabel(m.msg_timestamp);
           const showDay = day !== lastDay;
           lastDay = day;
+          const quoted = m.quoted_message_id ? messages.find((mm) => mm.message_id === m.quoted_message_id) : null;
+          const reactions = reactionsByMessage.get(m.message_id) ?? [];
+          const reactionGroups = new Map<string, number>();
+          for (const r of reactions) reactionGroups.set(r.emoji!, (reactionGroups.get(r.emoji!) ?? 0) + 1);
+          const myEmoji = reactions.find((r) => r.from_me)?.emoji;
+
           return (
             <div key={m.message_id}>
               {showDay && (
@@ -246,11 +294,34 @@ export default function ChatPage({ params }: { params: Promise<{ instance: strin
                   </span>
                 </div>
               )}
-              <div className={`mb-1 flex ${m.from_me ? "justify-end" : "justify-start"}`}>
+              <div className={`mb-1 flex flex-col ${m.from_me ? "items-end" : "items-start"}`}>
                 <div
                   className="max-w-[80%] rounded-lg px-3 py-1.5 shadow-sm"
                   style={{ background: m.from_me ? "var(--wa-bubble-out)" : "var(--wa-bubble-in)" }}
                 >
+                  {quoted && (
+                    <div
+                      className="mb-1 rounded border-l-4 px-2 py-1"
+                      style={{ borderColor: "var(--wa-accent)", background: "color-mix(in srgb, var(--wa-text) 6%, transparent)" }}
+                    >
+                      <p className="truncate text-xs font-semibold" style={{ color: "var(--wa-accent)" }}>
+                        {quoted.from_me ? "Você" : quoted.push_name || jidToPhone(jid)}
+                      </p>
+                      <p className="truncate text-xs" style={{ color: "var(--wa-text-muted)" }}>
+                        {quotedPreviewText(quoted)}
+                      </p>
+                    </div>
+                  )}
+                  {m.quoted_message_id && !quoted && (
+                    <div
+                      className="mb-1 rounded border-l-4 px-2 py-1"
+                      style={{ borderColor: "var(--wa-text-muted)", background: "color-mix(in srgb, var(--wa-text) 6%, transparent)" }}
+                    >
+                      <p className="truncate text-xs italic" style={{ color: "var(--wa-text-muted)" }}>
+                        mensagem citada
+                      </p>
+                    </div>
+                  )}
                   {(m.type === "image" || m.type === "sticker") && !m.message_id.startsWith("local-") && (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img
@@ -272,11 +343,62 @@ export default function ChatPage({ params }: { params: Promise<{ instance: strin
                     />
                   )}
                   <p className="whitespace-pre-wrap break-words text-[15px]">{m.content}</p>
-                  <p className="mt-0.5 flex items-center justify-end gap-1 text-[11px]" style={{ color: "var(--wa-text-muted)" }}>
-                    {new Date(m.msg_timestamp).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}
-                    {m.from_me && <Ticks status={m.status} />}
-                  </p>
+                  <div className="mt-0.5 flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 text-xs" style={{ color: "var(--wa-text-muted)" }}>
+                      {!readOnly && !m.message_id.startsWith("local-") && (
+                        <>
+                          <button onClick={() => startReply(m)} title="Responder" aria-label="Responder" className="opacity-70">
+                            ↩
+                          </button>
+                          <button
+                            onClick={() => setReactPickerFor(reactPickerFor === m.message_id ? null : m.message_id)}
+                            title="Reagir"
+                            aria-label="Reagir"
+                            className="opacity-70"
+                          >
+                            😊
+                          </button>
+                        </>
+                      )}
+                    </div>
+                    <p className="flex items-center gap-1 text-[11px]" style={{ color: "var(--wa-text-muted)" }}>
+                      {new Date(m.msg_timestamp).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}
+                      {m.from_me && <Ticks status={m.status} />}
+                    </p>
+                  </div>
                 </div>
+
+                {reactionGroups.size > 0 && (
+                  <div
+                    className="-mt-1.5 flex gap-1 rounded-full px-1.5 py-0.5 text-xs shadow-sm"
+                    style={{ background: "var(--wa-panel)" }}
+                  >
+                    {[...reactionGroups.entries()].map(([emoji, count]) => (
+                      <span key={emoji}>
+                        {emoji}
+                        {count > 1 ? count : ""}
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                {reactPickerFor === m.message_id && (
+                  <div
+                    className="mt-1 flex gap-1 rounded-full px-2 py-1 shadow-sm"
+                    style={{ background: "var(--wa-panel)" }}
+                  >
+                    {REACT_EMOJIS.map((emoji) => (
+                      <button
+                        key={emoji}
+                        onClick={() => handleReact(m, emoji)}
+                        className="rounded-full px-1 text-lg"
+                        style={{ background: myEmoji === emoji ? "color-mix(in srgb, var(--wa-accent) 25%, transparent)" : "transparent" }}
+                      >
+                        {emoji}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           );
@@ -293,6 +415,24 @@ export default function ChatPage({ params }: { params: Promise<{ instance: strin
         </div>
       ) : (
         <>
+          {replyingTo && (
+            <div
+              className="flex items-center gap-2 border-t px-3 py-2"
+              style={{ background: "var(--wa-panel)", borderColor: "color-mix(in srgb, var(--wa-text) 8%, transparent)" }}
+            >
+              <div className="min-w-0 flex-1 border-l-4 pl-2" style={{ borderColor: "var(--wa-accent)" }}>
+                <p className="truncate text-xs font-semibold" style={{ color: "var(--wa-accent)" }}>
+                  {replyingTo.from_me ? "Você" : replyingTo.push_name || jidToPhone(jid)}
+                </p>
+                <p className="truncate text-xs" style={{ color: "var(--wa-text-muted)" }}>
+                  {quotedPreviewText(replyingTo)}
+                </p>
+              </div>
+              <button onClick={() => setReplyingTo(null)} aria-label="Cancelar resposta" style={{ color: "var(--wa-text-muted)" }}>
+                ✕
+              </button>
+            </div>
+          )}
           {showDropdown && (
             <div
               className="max-h-52 overflow-y-auto border-t"

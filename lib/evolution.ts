@@ -17,8 +17,10 @@ async function evo(cfg: EvoConfig, path: string, body?: unknown, method = "POST"
   return json;
 }
 
-export function sendText(cfg: EvoConfig, instance: string, number: string, text: string) {
-  return evo(cfg, `/message/sendText/${instance}`, { number, text });
+export type QuotedRef = { key: { remoteJid: string; fromMe: boolean; id: string }; message: Record<string, unknown> };
+
+export function sendText(cfg: EvoConfig, instance: string, number: string, text: string, quoted?: QuotedRef) {
+  return evo(cfg, `/message/sendText/${instance}`, { number, text, ...(quoted ? { quoted } : {}) });
 }
 
 export function markRead(
@@ -27,6 +29,17 @@ export function markRead(
   readMessages: { remoteJid: string; fromMe: boolean; id: string }[]
 ) {
   return evo(cfg, `/chat/markMessageAsRead/${instance}`, { readMessages });
+}
+
+// Reage a uma mensagem com um emoji. Envie reactionMessage: "" para remover
+// a reação já enviada (mesma convenção do próprio WhatsApp).
+export function sendReaction(
+  cfg: EvoConfig,
+  instance: string,
+  reactionKey: { remoteJid: string; fromMe: boolean; id: string },
+  reactionMessage: string
+) {
+  return evo(cfg, `/message/sendReaction/${instance}`, { reactionKey, reactionMessage });
 }
 
 // --- Gerenciamento de instâncias (adicionar novo WhatsApp) ------------------

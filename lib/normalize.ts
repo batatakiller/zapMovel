@@ -10,11 +10,22 @@ export type ZapRow = {
   content: string | null;
   status: string;
   msg_timestamp: string;
+  quoted_message_id: string | null;
   raw: unknown;
 };
 
+export type ReactionRow = {
+  instance: string;
+  remote_jid: string;
+  target_message_id: string;
+  reactor_jid: string;
+  from_me: boolean;
+  emoji: string | null;
+  msg_timestamp: string;
+};
+
 type EvoMessage = {
-  key?: { remoteJid?: string; remoteJidAlt?: string; fromMe?: boolean; id?: string };
+  key?: { remoteJid?: string; remoteJidAlt?: string; fromMe?: boolean; id?: string; participant?: string };
   pushName?: string;
   message?: Record<string, any>;
   messageType?: string;
@@ -51,9 +62,6 @@ export function extractContent(msg?: Record<string, any>): { type: string; conte
   if (msg.extendedTextMessage?.text) {
     return { type: "text", content: msg.extendedTextMessage.text };
   }
-  if (msg.reactionMessage) {
-    return { type: "reaction", content: `Reagiu com ${msg.reactionMessage.text ?? "👍"}` };
-  }
   for (const [k, v] of Object.entries(TYPE_MAP)) {
     if (msg[k]) {
       const caption = msg[k]?.caption;
@@ -62,6 +70,19 @@ export function extractContent(msg?: Record<string, any>): { type: string; conte
   }
   const firstKey = Object.keys(msg)[0] ?? "other";
   return { type: "other", content: `[${firstKey}]` };
+}
+
+// Toda mensagem de conteúdo pode citar outra (responder) — o Baileys guarda
+// isso em contextInfo.stanzaId, dentro do wrapper do tipo (extendedTextMessage,
+// imageMessage etc.). Guardamos só o id citado; o conteúdo é buscado em
+// zap_messages na hora de exibir, sem duplicar dado.
+export function extractQuotedId(msg?: Record<string, any>): string | null {
+  if (!msg) return null;
+  for (const key of Object.keys(msg)) {
+    const stanzaId = msg[key]?.contextInfo?.stanzaId;
+    if (stanzaId) return stanzaId;
+  }
+  return null;
 }
 
 // STATUS numérico do Baileys: 0/1 pending, 2 sent (server ack), 3 delivered, 4 read
@@ -82,12 +103,39 @@ export function normalizeStatus(s: unknown): string {
   return STATUS_MAP[String(s)] ?? String(s).toLowerCase();
 }
 
+// Reações chegam como um evento de mensagem próprio (message.reactionMessage),
+// nunca devem virar uma linha normal em zap_messages — vão para zap_reactions.
+export function extractReaction(instance: string, data: EvoMessage): ReactionRow | null {
+  const reaction = data?.message?.reactionMessage;
+  const targetId = reaction?.key?.id;
+  if (!targetId) return null;
+
+  const jid = canonicalJid(data.key);
+  if (!jid) return null;
+
+  const fromMe = !!data.key?.fromMe;
+  const reactorJid = fromMe ? "me" : data.key?.participant ?? jid;
+  const ts = data.messageTimestamp ? new Date(Number(data.messageTimestamp) * 1000) : new Date();
+
+  return {
+    instance,
+    remote_jid: jid,
+    target_message_id: targetId,
+    reactor_jid: reactorJid,
+    from_me: fromMe,
+    emoji: reaction.text?.trim() || null, // vazio = reação removida
+    msg_timestamp: ts.toISOString(),
+  };
+}
+
 export function normalizeUpsert(instance: string, data: EvoMessage): ZapRow | null {
   const key = data?.key;
   const jid = canonicalJid(key);
   if (!jid || !key?.id) return null;
   // ignora broadcasts/status do WhatsApp
   if (jid === "status@broadcast") return null;
+  // reações têm seu próprio caminho (extractReaction) — não viram mensagem
+  if (data.message?.reactionMessage) return null;
 
   const { type, content } = extractContent(data.message);
   const ts = data.messageTimestamp ? new Date(Number(data.messageTimestamp) * 1000) : new Date();
@@ -102,6 +150,7 @@ export function normalizeUpsert(instance: string, data: EvoMessage): ZapRow | nu
     content,
     status: key.fromMe ? normalizeStatus(data.status ?? "sent") : "received",
     msg_timestamp: ts.toISOString(),
+    quoted_message_id: extractQuotedId(data.message),
     raw: data,
   };
 }

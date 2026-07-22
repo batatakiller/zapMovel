@@ -10,6 +10,8 @@ import {
   normalizeUpsert,
   normStatus,
   upsertRows,
+  extractReaction,
+  upsertReactions,
   findMessages,
   listLiveInstances,
   getEvolutionConfig,
@@ -35,7 +37,20 @@ class InstanceWorker {
   }
 
   async saveUpsert(data) {
-    const row = normalizeUpsert(data?.messages?.[0] ?? data, this.instance);
+    const raw = data?.messages?.[0] ?? data;
+
+    const reaction = extractReaction(raw, this.instance);
+    if (reaction) {
+      try {
+        await upsertReactions([reaction]);
+        this.log(`${reaction.from_me ? "→" : "←"} reação ${reaction.emoji ?? "(removida)"} em ${reaction.target_message_id}`);
+      } catch (e) {
+        this.log(`erro ao gravar reação: ${e.message}`);
+      }
+      return;
+    }
+
+    const row = normalizeUpsert(raw, this.instance);
     if (!row) return;
     try {
       await upsertRows([row]);
@@ -63,7 +78,14 @@ class InstanceWorker {
   async pollOnce() {
     try {
       const { records } = await findMessages(this.instance, 1, 30);
-      const rows = (records ?? []).map((r) => normalizeUpsert(r, this.instance)).filter(Boolean);
+      const recs = records ?? [];
+
+      const reactions = recs.map((r) => extractReaction(r, this.instance)).filter(Boolean);
+      if (reactions.length) {
+        await upsertReactions(reactions).catch((e) => this.log(`erro ao gravar reações: ${e.message}`));
+      }
+
+      const rows = recs.map((r) => normalizeUpsert(r, this.instance)).filter(Boolean);
       const n = await upsertRows(rows);
       if (process.env.DEBUG) this.log(`poll: ${n} mensagens sincronizadas`);
       for (const row of rows) cacheMediaForRow(row).catch((e) => this.log(`erro ao cachear mídia: ${e.message}`));
