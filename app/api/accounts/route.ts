@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase-server";
 import { listAccounts, setEvolutionConfig } from "@/lib/accounts";
-import { createInstance } from "@/lib/evolution";
+import { createInstance, connectionState } from "@/lib/evolution";
 
 // GET /api/accounts — lista todas as contas cadastradas.
 export async function GET() {
@@ -17,11 +17,13 @@ export async function GET() {
 // Depois use GET /api/accounts/<instance>/qr para escanear o QR e parear.
 export async function POST(req: NextRequest) {
   const { instance, label, color, phone, evolutionUrl, evolutionApikey } = await req.json().catch(() => ({}));
-  const name = String(instance ?? "").trim().toLowerCase();
+  // Preserva a caixa exata: instâncias já existentes no Evolution (criadas por
+  // fora do ZapMóvel) são sensíveis a maiúsculas/minúsculas no nome.
+  const name = String(instance ?? "").trim();
 
-  if (!/^[a-z0-9][a-z0-9-]{1,30}$/.test(name)) {
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{1,30}$/.test(name)) {
     return NextResponse.json(
-      { error: "instance inválido: use letras minúsculas, números e hífen (2 a 31 caracteres)" },
+      { error: "instance inválido: use letras, números, hífen e underscore (2 a 31 caracteres)" },
       { status: 400 }
     );
   }
@@ -48,13 +50,19 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Cria a instância no Evolution (idempotente: se já existir lá, seguimos em frente).
+  // Se a instância já existe nesse servidor (ex.: você só tem o token dela,
+  // pareada por fora do ZapMóvel), NÃO tenta criar — criar exige a apikey
+  // GLOBAL de admin do servidor, que o token de uma instância não tem.
+  const alreadyExists = (await connectionState(cfg, name).catch(() => "unknown")) !== "unknown";
+
   let created: any = null;
-  try {
-    created = await createInstance(cfg, name);
-  } catch (e: any) {
-    if (!/already in use|already exists/i.test(e?.message ?? "")) {
-      return NextResponse.json({ error: `falha ao criar instância no Evolution: ${e?.message}` }, { status: 502 });
+  if (!alreadyExists) {
+    try {
+      created = await createInstance(cfg, name);
+    } catch (e: any) {
+      if (!/already in use|already exists/i.test(e?.message ?? "")) {
+        return NextResponse.json({ error: `falha ao criar instância no Evolution: ${e?.message}` }, { status: 502 });
+      }
     }
   }
 

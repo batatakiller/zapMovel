@@ -156,9 +156,11 @@ export default function AccountsPage() {
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
-    const name = instance.trim().toLowerCase();
-    if (!/^[a-z0-9][a-z0-9-]{1,30}$/.test(name)) {
-      setError("Identificador inválido: use minúsculas, números e hífen (2 a 31 caracteres).");
+    // Preserva a caixa exata: se a instância já existe no Evolution (criada
+    // por fora do ZapMóvel), o nome é sensível a maiúsculas/minúsculas.
+    const name = instance.trim();
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{1,30}$/.test(name)) {
+      setError("Identificador inválido: use letras, números, hífen e underscore (2 a 31 caracteres).");
       return;
     }
     if (!label.trim()) {
@@ -339,12 +341,12 @@ export default function AccountsPage() {
               </div>
               <div>
                 <label className="mb-1 block text-xs font-semibold" style={{ color: "var(--wa-text-muted)" }}>
-                  Identificador (sem espaços)
+                  Identificador (sem espaços — se a instância já existe no Evolution, use o nome EXATO, com a mesma caixa)
                 </label>
                 <input
                   value={instance}
                   onChange={(e) => setInstance(e.target.value)}
-                  placeholder="ex.: trabalho"
+                  placeholder="ex.: trabalho ou AJU"
                   className="w-full rounded-lg px-3 py-2 outline-none"
                   style={{ background: "var(--wa-panel)", color: "var(--wa-text)" }}
                 />
@@ -394,7 +396,7 @@ export default function AccountsPage() {
                   setUrl={setEvolutionUrl}
                   apikey={evolutionApikey}
                   setApikey={setEvolutionApikey}
-                  hint="Deixe em branco para usar o mesmo servidor Evolution já configurado no projeto (.env). Só preencha se este WhatsApp roda numa instância Evolution diferente (outro VPS/Coolify)."
+                  hint="Deixe em branco para usar o mesmo servidor Evolution já configurado no projeto (.env). Só preencha se este WhatsApp roda numa instância Evolution diferente (outro VPS/Coolify). Se a instância já existe e está pareada (ex.: criada pelo Evolution Manager), use o identificador dela em 'Identificador' e a apikey/token dessa instância aqui — o app detecta que já existe e conecta direto, sem precisar da chave global de admin."
                 />
               )}
 
