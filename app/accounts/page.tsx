@@ -35,11 +35,20 @@ function EvolutionFields({
           URL do servidor Evolution
         </label>
         <input
+          type="url"
+          name="zm-evolution-server-url"
           value={url}
           onChange={(e) => setUrl(e.target.value)}
           placeholder="https://evolution2.meuservidor.com"
           className="w-full rounded-lg px-3 py-2 outline-none"
           style={{ background: "var(--wa-panel)", color: "var(--wa-text)" }}
+          autoComplete="off"
+          autoCorrect="off"
+          autoCapitalize="off"
+          spellCheck={false}
+          data-1p-ignore
+          data-lpignore="true"
+          data-form-type="other"
         />
       </div>
       <div>
@@ -47,13 +56,24 @@ function EvolutionFields({
           Apikey desse servidor
         </label>
         <input
-          type="password"
+          type="text"
+          name="zm-evolution-server-apikey"
           value={apikey}
           onChange={(e) => setApikey(e.target.value)}
-          placeholder="••••••••"
-          className="w-full rounded-lg px-3 py-2 outline-none"
+          placeholder="ex.: B836FD3A9A67-4234-8241-1444C8FCF1D3"
+          className="w-full rounded-lg px-3 py-2 font-mono text-sm outline-none"
           style={{ background: "var(--wa-panel)", color: "var(--wa-text)" }}
+          autoComplete="off"
+          autoCorrect="off"
+          autoCapitalize="off"
+          spellCheck={false}
+          data-1p-ignore
+          data-lpignore="true"
+          data-form-type="other"
         />
+        <p className="mt-1 text-[11px]" style={{ color: "var(--wa-text-muted)" }}>
+          Fica visível de propósito — evita autofill do navegador colar login/senha salvos aqui por engano.
+        </p>
       </div>
     </div>
   );
@@ -104,6 +124,7 @@ export default function AccountsPage() {
   const [qr, setQr] = useState<string | null>(null);
   const [pairingCode, setPairingCode] = useState<string | null>(null);
   const [connected, setConnected] = useState(false);
+  const [qrError, setQrError] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const stopPolling = useCallback(() => {
@@ -118,6 +139,11 @@ export default function AccountsPage() {
       try {
         const res = await fetch(`/api/accounts/${encodeURIComponent(inst)}/qr`);
         const json = await res.json();
+        if (!res.ok || json.error) {
+          setQrError(json.error ?? `falha ao obter QR (HTTP ${res.status})`);
+          return; // continua tentando no próximo tick — pode ser algo transitório
+        }
+        setQrError(null);
         if (json.connected) {
           setConnected(true);
           setQr(null);
@@ -126,8 +152,8 @@ export default function AccountsPage() {
         }
         if (json.qr) setQr(json.qr);
         if (json.pairingCode) setPairingCode(json.pairingCode);
-      } catch {
-        /* ignora — tenta de novo no próximo tick */
+      } catch (e) {
+        setQrError((e as Error).message || "falha de rede ao buscar o QR");
       }
     },
     [stopPolling]
@@ -139,6 +165,7 @@ export default function AccountsPage() {
     setQr(null);
     setPairingCode(null);
     setConnected(false);
+    setQrError(null);
     pollQr(inst);
     pollRef.current = setInterval(() => pollQr(inst), 3000);
   }
@@ -149,6 +176,7 @@ export default function AccountsPage() {
     setQr(null);
     setPairingCode(null);
     setConnected(false);
+    setQrError(null);
   }
 
   useEffect(() => stopPolling, [stopPolling]);
@@ -468,6 +496,15 @@ export default function AccountsPage() {
                   </p>
                 )}
               </>
+            ) : qrError ? (
+              <div className="py-6">
+                <p className="text-3xl">⚠️</p>
+                <p className="mt-2 text-sm font-medium text-red-500">{qrError}</p>
+                <p className="mt-2 text-xs" style={{ color: "var(--wa-text-muted)" }}>
+                  Continuando a tentar... Se persistir, confira a URL/apikey do servidor Evolution dessa conta (✏️
+                  editar).
+                </p>
+              </div>
             ) : (
               <p className="py-10 text-sm" style={{ color: "var(--wa-text-muted)" }}>
                 Gerando QR code...
