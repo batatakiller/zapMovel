@@ -34,6 +34,7 @@ Backup Android (msgstore.db) ──scripts/import-msgstore.mjs──▶ Supabase
 - **Adicionar um número ao vivo:** no app, ícone 👤 → "Adicionar um WhatsApp", escaneie o QR. O bridge detecta a conta nova automaticamente (a cada 30s, sem reiniciar).
 - **Importar backup de aparelho antigo:** veja [docs/IMPORTAR-BACKUP.md](docs/IMPORTAR-BACKUP.md) — `npm run import -- ./msgstore.db --instance zap-antigo --media "/caminho/WhatsApp"`.
 - **Número em outro servidor Evolution:** por padrão toda conta usa o servidor Evolution do `.env.local`. Se um número específico mora em outro servidor (outra VPS/Coolify), abra "⚙️ Avançado" no formulário de criação (ou o ✏️ de uma conta já criada) e informe a URL + apikey daquele servidor — fica salvo só no banco, nunca exposto ao navegador.
+- **Conta cujo webhook já aponta para outro bot (n8n etc.):** a Vercel é serverless — só recebe mensagens via webhook. Se uma conta já tem webhook configurado para outro destino (um bot de negócio já em produção), trocar esse webhook arriscaria quebrar esse bot. A solução é rodar o bridge como serviço persistente no mesmo VPS/Coolify que hospeda o Evolution — veja [docs/BRIDGE-COOLIFY.md](docs/BRIDGE-COOLIFY.md). Ele sincroniza via WebSocket/polling sem tocar em nenhum webhook existente.
 
 ## Mídia
 

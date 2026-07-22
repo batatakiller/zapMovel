@@ -12,9 +12,12 @@ export type Account = {
 
 export type EvolutionConfig = { url: string; apikey: string };
 
+// remove barra(s) no final — evita "http://host//instance" ao concatenar
+export const stripTrailingSlash = (url: string) => url.replace(/\/+$/, "");
+
 const DEFAULT_INSTANCE = process.env.EVOLUTION_INSTANCE ?? "super";
 const DEFAULT_EVOLUTION: EvolutionConfig = {
-  url: process.env.EVOLUTION_URL ?? "",
+  url: stripTrailingSlash(process.env.EVOLUTION_URL ?? ""),
   apikey: process.env.EVOLUTION_APIKEY ?? "",
 };
 
@@ -79,8 +82,9 @@ export async function getEvolutionConfig(instance: string): Promise<EvolutionCon
       .select("evolution_url,evolution_apikey")
       .eq("instance", instance)
       .maybeSingle();
+    const customUrl = data?.evolution_url?.trim();
     return {
-      url: data?.evolution_url?.trim() || DEFAULT_EVOLUTION.url,
+      url: customUrl ? stripTrailingSlash(customUrl) : DEFAULT_EVOLUTION.url,
       apikey: data?.evolution_apikey?.trim() || DEFAULT_EVOLUTION.apikey,
     };
   } catch {
@@ -97,7 +101,7 @@ export async function setEvolutionConfig(
   apikey: string | null | undefined
 ): Promise<void> {
   const db = supabaseAdmin();
-  const cleanUrl = url?.trim() || null;
+  const cleanUrl = url?.trim() ? stripTrailingSlash(url.trim()) : null;
   const cleanKey = apikey?.trim() || null;
   const { error } = await db
     .from("zap_account_secrets")

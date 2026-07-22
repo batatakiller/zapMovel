@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase-server";
-import { listAccounts, setEvolutionConfig } from "@/lib/accounts";
+import { listAccounts, setEvolutionConfig, stripTrailingSlash } from "@/lib/accounts";
 import { createInstance, connectionState } from "@/lib/evolution";
 
 // GET /api/accounts — lista todas as contas cadastradas.
@@ -40,7 +40,7 @@ export async function POST(req: NextRequest) {
   // Resolve o servidor Evolution: o informado no formulário, ou o padrão do .env
   // (a conta ainda não existe, então não há configuração própria salva ainda).
   const cfg = {
-    url: evolutionUrl?.trim() || process.env.EVOLUTION_URL || "",
+    url: stripTrailingSlash(evolutionUrl?.trim() || process.env.EVOLUTION_URL || ""),
     apikey: evolutionApikey?.trim() || process.env.EVOLUTION_APIKEY || "",
   };
   if (!cfg.url || !cfg.apikey) {

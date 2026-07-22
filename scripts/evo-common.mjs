@@ -14,7 +14,10 @@ if (existsSync(envFile)) {
   }
 }
 
-export const EVOLUTION_URL = process.env.EVOLUTION_URL;
+// remove barra(s) no final — evita "http://host//instance" ao concatenar
+const stripTrailingSlash = (url) => (url ?? "").replace(/\/+$/, "");
+
+export const EVOLUTION_URL = stripTrailingSlash(process.env.EVOLUTION_URL);
 export const APIKEY = process.env.EVOLUTION_APIKEY;
 export const INSTANCE = process.env.EVOLUTION_INSTANCE ?? "super";
 
@@ -47,8 +50,9 @@ export async function getEvolutionConfig(instance) {
       .select("evolution_url,evolution_apikey")
       .eq("instance", instance)
       .maybeSingle();
+    const customUrl = data?.evolution_url?.trim();
     return {
-      url: data?.evolution_url?.trim() || EVOLUTION_URL,
+      url: customUrl ? stripTrailingSlash(customUrl) : EVOLUTION_URL,
       apikey: data?.evolution_apikey?.trim() || APIKEY,
     };
   } catch {
