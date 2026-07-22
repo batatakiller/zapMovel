@@ -18,6 +18,7 @@ import Link from "next/link";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 import { useSession } from "@/hooks/useSession";
 import { useAccounts } from "@/hooks/useAccounts";
+import { useQuickReplies } from "@/hooks/useQuickReplies";
 import { jidToPhone } from "@/lib/normalize";
 import type { ZapMessage } from "@/lib/types";
 
@@ -66,15 +67,30 @@ export default function ChatPage({ params }: { params: Promise<{ instance: strin
   const jid = decodeURIComponent(encoded);
   const ready = useSession();
   const { byInstance } = useAccounts();
+  const { replies: quickReplies } = useQuickReplies();
   const [messages, setMessages] = useState<ZapMessage[]>([]);
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
+  const [showPicker, setShowPicker] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const textInputRef = useRef<HTMLInputElement>(null);
   const name = messages.find((m) => !m.from_me && m.push_name)?.push_name ?? jidToPhone(jid);
 
   const account = byInstance.get(instance);
   const readOnly = account?.kind === "archive";
   const headerColor = account?.color ?? "var(--wa-header)";
+
+  // digitar "/atalho" filtra as respostas rápidas; o botão ⚡ mostra todas
+  const slashFilter = text.startsWith("/") ? text.slice(1).toLowerCase() : null;
+  const filteredReplies =
+    slashFilter !== null ? quickReplies.filter((r) => r.shortcut.toLowerCase().startsWith(slashFilter)) : quickReplies;
+  const showDropdown = (showPicker || slashFilter !== null) && !readOnly;
+
+  function insertQuickReply(message: string) {
+    setText(message);
+    setShowPicker(false);
+    textInputRef.current?.focus();
+  }
 
   const load = useCallback(async () => {
     const { data } = await supabaseBrowser()
@@ -276,47 +292,94 @@ export default function ChatPage({ params }: { params: Promise<{ instance: strin
           📁 Arquivo importado — somente leitura (esta conta não está conectada)
         </div>
       ) : (
-        <form
-          onSubmit={handleSend}
-          className="flex items-center gap-2 p-2"
-          style={{ background: "var(--wa-panel)", paddingBottom: "max(0.5rem, env(safe-area-inset-bottom))" }}
-        >
-          <label
-            className="flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-full text-xl"
-            style={{ background: "var(--wa-bg)", color: "var(--wa-text-muted)" }}
-            aria-label="Anexar imagem"
-            title="Enviar imagem"
+        <>
+          {showDropdown && (
+            <div
+              className="max-h-52 overflow-y-auto border-t"
+              style={{ background: "var(--wa-panel)", borderColor: "color-mix(in srgb, var(--wa-text) 8%, transparent)" }}
+            >
+              {filteredReplies.length === 0 ? (
+                <p className="px-4 py-3 text-sm" style={{ color: "var(--wa-text-muted)" }}>
+                  Nenhuma resposta rápida encontrada.{" "}
+                  <Link href="/quick-replies" className="underline">
+                    Cadastrar uma
+                  </Link>
+                </p>
+              ) : (
+                filteredReplies.map((r) => (
+                  <button
+                    key={r.id}
+                    type="button"
+                    onClick={() => insertQuickReply(r.message)}
+                    className="block w-full px-4 py-2 text-left"
+                  >
+                    <p className="font-mono text-xs font-semibold" style={{ color: "var(--wa-accent)" }}>
+                      /{r.shortcut}
+                    </p>
+                    <p className="truncate text-sm" style={{ color: "var(--wa-text)" }}>
+                      {r.message}
+                    </p>
+                  </button>
+                ))
+              )}
+            </div>
+          )}
+          <form
+            onSubmit={handleSend}
+            className="flex items-center gap-2 p-2"
+            style={{ background: "var(--wa-panel)", paddingBottom: "max(0.5rem, env(safe-area-inset-bottom))" }}
           >
-            📎
+            <label
+              className="flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-full text-xl"
+              style={{ background: "var(--wa-bg)", color: "var(--wa-text-muted)" }}
+              aria-label="Anexar imagem"
+              title="Enviar imagem"
+            >
+              📎
+              <input
+                type="file"
+                accept="image/*"
+                className="hidden"
+                disabled={sending}
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) handleSendImage(f);
+                  e.target.value = "";
+                }}
+              />
+            </label>
+            <button
+              type="button"
+              onClick={() => setShowPicker((v) => !v)}
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-xl"
+              style={{ background: "var(--wa-bg)", color: "var(--wa-text-muted)" }}
+              aria-label="Respostas rápidas"
+              title="Respostas rápidas"
+            >
+              ⚡
+            </button>
             <input
-              type="file"
-              accept="image/*"
-              className="hidden"
-              disabled={sending}
+              ref={textInputRef}
+              value={text}
               onChange={(e) => {
-                const f = e.target.files?.[0];
-                if (f) handleSendImage(f);
-                e.target.value = "";
+                setText(e.target.value);
+                if (!e.target.value.startsWith("/")) setShowPicker(false);
               }}
+              placeholder="Mensagem"
+              className="flex-1 rounded-full px-4 py-2.5 outline-none"
+              style={{ background: "var(--wa-bg)", color: "var(--wa-text)" }}
             />
-          </label>
-          <input
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            placeholder="Mensagem"
-            className="flex-1 rounded-full px-4 py-2.5 outline-none"
-            style={{ background: "var(--wa-bg)", color: "var(--wa-text)" }}
-          />
-          <button
-            type="submit"
-            disabled={!text.trim() || sending}
-            aria-label="Enviar"
-            className="flex h-11 w-11 items-center justify-center rounded-full text-white disabled:opacity-50"
-            style={{ background: "var(--wa-accent)" }}
-          >
-            ➤
-          </button>
-        </form>
+            <button
+              type="submit"
+              disabled={!text.trim() || sending}
+              aria-label="Enviar"
+              className="flex h-11 w-11 items-center justify-center rounded-full text-white disabled:opacity-50"
+              style={{ background: "var(--wa-accent)" }}
+            >
+              ➤
+            </button>
+          </form>
+        </>
       )}
     </div>
   );

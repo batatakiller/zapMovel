@@ -28,3 +28,10 @@ export type Chat = {
   last: ZapMessage;
   unread: number;
 };
+
+export type QuickReply = {
+  id: number;
+  shortcut: string;
+  message: string;
+  sort_order: number;
+};

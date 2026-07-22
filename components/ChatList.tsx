@@ -148,6 +148,9 @@ export default function ChatList() {
       >
         <h1 className="text-xl font-semibold">ZapMóvel</h1>
         <div className="flex items-center gap-4">
+          <Link href="/quick-replies" className="text-lg" title="Respostas rápidas">
+            ⚡
+          </Link>
           <Link href="/accounts" className="text-lg" title="Contas de WhatsApp">
             👤
           </Link>
