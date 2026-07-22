@@ -5,8 +5,9 @@ import Link from "next/link";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 import { useSession } from "@/hooks/useSession";
 import { usePush } from "@/hooks/usePush";
+import { useAccounts } from "@/hooks/useAccounts";
 import { jidToPhone, isGroup } from "@/lib/normalize";
-import type { ZapMessage, Chat } from "@/lib/types";
+import type { ZapMessage, Chat, Account } from "@/lib/types";
 
 function formatTime(ts: string): string {
   const d = new Date(ts);
@@ -20,25 +21,45 @@ function formatTime(ts: string): string {
   return d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "2-digit" });
 }
 
+// Chaveia por (conta + contato): o mesmo número pode existir em duas contas suas.
 function buildChats(messages: ZapMessage[]): Chat[] {
-  const byJid = new Map<string, Chat>();
+  const byKey = new Map<string, Chat>();
   for (const m of messages) {
-    const existing = byJid.get(m.remote_jid);
+    const key = `${m.instance}|${m.remote_jid}`;
+    const existing = byKey.get(key);
+    const isUnread = !m.from_me && m.status !== "read";
     if (!existing) {
-      byJid.set(m.remote_jid, {
+      byKey.set(key, {
+        instance: m.instance,
         jid: m.remote_jid,
         name: (!m.from_me && m.push_name) || jidToPhone(m.remote_jid),
         last: m,
-        unread: !m.from_me ? 1 : 0,
+        unread: isUnread ? 1 : 0,
       });
     } else {
       if (new Date(m.msg_timestamp) > new Date(existing.last.msg_timestamp)) existing.last = m;
       if (!m.from_me && m.push_name && /^[\d]/.test(existing.name)) existing.name = m.push_name;
-      if (!m.from_me) existing.unread++;
+      if (isUnread) existing.unread++;
     }
   }
-  return [...byJid.values()].sort(
+  return [...byKey.values()].sort(
     (a, b) => new Date(b.last.msg_timestamp).getTime() - new Date(a.last.msg_timestamp).getTime()
+  );
+}
+
+function chatHref(c: Chat): string {
+  return `/chat/${encodeURIComponent(c.instance)}/${encodeURIComponent(c.jid)}`;
+}
+
+// pontinho colorido da conta (só aparece quando há mais de uma)
+function AccountDot({ acc }: { acc?: Account }) {
+  if (!acc) return null;
+  return (
+    <span
+      className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
+      style={{ background: acc.color }}
+      title={acc.label}
+    />
   );
 }
 
@@ -46,10 +67,12 @@ type SearchResults = { chats: Chat[]; hits: ZapMessage[] };
 
 export default function ChatListPage() {
   const ready = useSession();
+  const { accounts, byInstance } = useAccounts();
   const [messages, setMessages] = useState<ZapMessage[]>([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResults | null>(null);
+  const [filter, setFilter] = useState<string>("all"); // 'all' ou uma instance
   const push = usePush();
 
   const load = useCallback(async () => {
@@ -57,7 +80,7 @@ export default function ChatListPage() {
       .from("zap_messages")
       .select("id,instance,remote_jid,message_id,from_me,push_name,type,content,status,msg_timestamp")
       .order("msg_timestamp", { ascending: false })
-      .limit(800);
+      .limit(1200);
     if (!error && data) setMessages(data as ZapMessage[]);
     setLoading(false);
   }, []);
@@ -69,7 +92,6 @@ export default function ChatListPage() {
       .channel("chat-list")
       .on("postgres_changes", { event: "*", schema: "public", table: "zap_messages" }, () => load())
       .subscribe();
-    // fallback: enquanto o realtime não estiver habilitado na tabela, sincroniza a cada 5s
     const timer = setInterval(() => {
       if (document.visibilityState === "visible") load();
     }, 5000);
@@ -79,7 +101,7 @@ export default function ChatListPage() {
     };
   }, [ready, load]);
 
-  // busca por nome, telefone ou conteúdo (nº de pedido, chave etc.) no histórico inteiro
+  // busca por nome, telefone ou conteúdo no histórico inteiro
   useEffect(() => {
     const q = query.trim();
     if (q.length < 2) {
@@ -94,7 +116,8 @@ export default function ChatListPage() {
         .or(`push_name.ilike.%${safe}%,remote_jid.ilike.%${safe}%,content.ilike.%${safe}%`)
         .order("msg_timestamp", { ascending: false })
         .limit(300);
-      const rows = (data ?? []) as ZapMessage[];
+      let rows = (data ?? []) as ZapMessage[];
+      if (filter !== "all") rows = rows.filter((m) => m.instance === filter);
       const lower = safe.toLowerCase();
       const byContact = rows.filter(
         (m) => m.push_name?.toLowerCase().includes(lower) || m.remote_jid.includes(safe)
@@ -103,9 +126,14 @@ export default function ChatListPage() {
       setResults({ chats: buildChats(byContact), hits });
     }, 300);
     return () => clearTimeout(t);
-  }, [query]);
+  }, [query, filter]);
 
-  const chats = useMemo(() => buildChats(messages), [messages]);
+  const visibleMessages = useMemo(
+    () => (filter === "all" ? messages : messages.filter((m) => m.instance === filter)),
+    [messages, filter]
+  );
+  const chats = useMemo(() => buildChats(visibleMessages), [visibleMessages]);
+  const multiAccount = accounts.length > 1;
 
   if (!ready) return null;
 
@@ -117,6 +145,9 @@ export default function ChatListPage() {
       >
         <h1 className="text-xl font-semibold">ZapMóvel</h1>
         <div className="flex items-center gap-4">
+          <Link href="/accounts" className="text-lg" title="Contas de WhatsApp">
+            👤
+          </Link>
           <button
             onClick={() => (push.state === "enabled" ? push.disable() : push.enable())}
             className="text-lg"
@@ -161,6 +192,22 @@ export default function ChatListPage() {
         </div>
       </div>
 
+      {/* Filtro por conta (só quando há mais de uma) */}
+      {multiAccount && (
+        <div className="flex gap-2 overflow-x-auto px-3 pb-2" style={{ background: "var(--wa-panel)" }}>
+          <FilterChip active={filter === "all"} onClick={() => setFilter("all")} label="Todas" />
+          {accounts.map((a) => (
+            <FilterChip
+              key={a.instance}
+              active={filter === a.instance}
+              onClick={() => setFilter(a.instance)}
+              label={a.label}
+              color={a.color}
+            />
+          ))}
+        </div>
+      )}
+
       {loading && (
         <p className="p-6 text-center text-sm" style={{ color: "var(--wa-text-muted)" }}>
           Carregando conversas...
@@ -179,16 +226,19 @@ export default function ChatListPage() {
           )}
           <ul>
             {results.chats.map((c) => (
-              <li key={c.jid}>
-                <Link href={`/chat/${encodeURIComponent(c.jid)}`} className="flex items-center gap-3 px-4 py-2.5">
+              <li key={`${c.instance}|${c.jid}`}>
+                <Link href={chatHref(c)} className="flex items-center gap-3 px-4 py-2.5">
                   <div
                     className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full font-semibold text-white"
-                    style={{ background: "var(--wa-header)" }}
+                    style={{ background: byInstance.get(c.instance)?.color ?? "var(--wa-header)" }}
                   >
                     {c.name[0]?.toUpperCase() ?? "#"}
                   </div>
                   <div className="min-w-0">
-                    <p className="truncate font-medium">{c.name}</p>
+                    <p className="flex items-center gap-1.5 truncate font-medium">
+                      {multiAccount && <AccountDot acc={byInstance.get(c.instance)} />}
+                      {c.name}
+                    </p>
                     <p className="truncate text-sm" style={{ color: "var(--wa-text-muted)" }}>
                       {jidToPhone(c.jid)}
                     </p>
@@ -208,9 +258,13 @@ export default function ChatListPage() {
           <ul className="pb-4">
             {results.hits.map((m) => (
               <li key={m.id}>
-                <Link href={`/chat/${encodeURIComponent(m.remote_jid)}`} className="block px-4 py-2.5">
+                <Link
+                  href={`/chat/${encodeURIComponent(m.instance)}/${encodeURIComponent(m.remote_jid)}`}
+                  className="block px-4 py-2.5"
+                >
                   <div className="flex items-baseline justify-between gap-2">
-                    <p className="truncate text-sm font-medium">
+                    <p className="flex items-center gap-1.5 truncate text-sm font-medium">
+                      {multiAccount && <AccountDot acc={byInstance.get(m.instance)} />}
                       {(!m.from_me && m.push_name) || jidToPhone(m.remote_jid)}
                     </p>
                     <span className="shrink-0 text-xs" style={{ color: "var(--wa-text-muted)" }}>
@@ -234,6 +288,9 @@ export default function ChatListPage() {
           <p className="text-sm" style={{ color: "var(--wa-text-muted)" }}>
             Quando chegar uma mensagem no WhatsApp ela aparece aqui em tempo real.
           </p>
+          <Link href="/accounts" className="mt-2 rounded-full px-4 py-2 text-sm text-white" style={{ background: "var(--wa-accent)" }}>
+            Adicionar um WhatsApp
+          </Link>
         </div>
       )}
 
@@ -243,17 +300,18 @@ export default function ChatListPage() {
         style={{ borderColor: "color-mix(in srgb, var(--wa-text) 8%, transparent)" }}
       >
         {chats.map((c) => (
-          <li key={c.jid}>
-            <Link href={`/chat/${encodeURIComponent(c.jid)}`} className="flex items-center gap-3 px-4 py-3">
+          <li key={`${c.instance}|${c.jid}`}>
+            <Link href={chatHref(c)} className="flex items-center gap-3 px-4 py-3">
               <div
                 className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full text-lg font-semibold text-white"
-                style={{ background: "var(--wa-header)" }}
+                style={{ background: byInstance.get(c.instance)?.color ?? "var(--wa-header)" }}
               >
                 {isGroup(c.jid) ? "👥" : c.name.replace(/\D/g, "") === c.name ? "#" : c.name[0]?.toUpperCase()}
               </div>
               <div className="min-w-0 flex-1">
                 <div className="flex items-baseline justify-between gap-2">
                   <div className="flex items-center gap-2">
+                    {multiAccount && <AccountDot acc={byInstance.get(c.instance)} />}
                     <p className={`truncate font-medium ${c.unread > 0 ? "font-bold" : ""}`}>{c.name}</p>
                     {c.unread > 0 && (
                       <span
@@ -278,5 +336,31 @@ export default function ChatListPage() {
         ))}
       </ul>
     </main>
+  );
+}
+
+function FilterChip({
+  active,
+  onClick,
+  label,
+  color,
+}: {
+  active: boolean;
+  onClick: () => void;
+  label: string;
+  color?: string;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className="flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1 text-sm"
+      style={{
+        background: active ? "var(--wa-accent)" : "var(--wa-bg)",
+        color: active ? "#fff" : "var(--wa-text)",
+      }}
+    >
+      {color && <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: color }} />}
+      {label}
+    </button>
   );
 }

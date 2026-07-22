@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "bridge": "node scripts/bridge.mjs",
-    "backfill": "node scripts/backfill.mjs"
+    "backfill": "node scripts/backfill.mjs",
+    "import": "node scripts/import-msgstore.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.110.2",

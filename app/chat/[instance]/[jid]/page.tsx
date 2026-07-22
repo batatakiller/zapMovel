@@ -17,10 +17,11 @@ async function compressImage(file: File): Promise<{ base64: string; mimetype: st
 import Link from "next/link";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 import { useSession } from "@/hooks/useSession";
+import { useAccounts } from "@/hooks/useAccounts";
 import { jidToPhone } from "@/lib/normalize";
 import type { ZapMessage } from "@/lib/types";
 
-async function markAsRead(jid: string, messages: ZapMessage[]) {
+async function markAsRead(jid: string, instance: string, messages: ZapMessage[]) {
   const unreadMessages = messages.filter((m) => !m.from_me && m.status !== "read");
   if (unreadMessages.length === 0) return;
   try {
@@ -29,6 +30,7 @@ async function markAsRead(jid: string, messages: ZapMessage[]) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         jid,
+        instance,
         messages: unreadMessages.map((m) => ({ remoteJid: m.remote_jid, fromMe: m.from_me, id: m.message_id })),
       }),
     });
@@ -58,48 +60,52 @@ function dayLabel(ts: string): string {
   return d.toLocaleDateString("pt-BR");
 }
 
-export default function ChatPage({ params }: { params: Promise<{ jid: string }> }) {
-  const { jid: encoded } = use(params);
+export default function ChatPage({ params }: { params: Promise<{ instance: string; jid: string }> }) {
+  const { instance: encInstance, jid: encoded } = use(params);
+  const instance = decodeURIComponent(encInstance);
   const jid = decodeURIComponent(encoded);
   const ready = useSession();
+  const { byInstance } = useAccounts();
   const [messages, setMessages] = useState<ZapMessage[]>([]);
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const name = messages.find((m) => !m.from_me && m.push_name)?.push_name ?? jidToPhone(jid);
 
+  const account = byInstance.get(instance);
+  const readOnly = account?.kind === "archive";
+  const headerColor = account?.color ?? "var(--wa-header)";
+
   const load = useCallback(async () => {
     const { data } = await supabaseBrowser()
       .from("zap_messages")
       .select("id,instance,remote_jid,message_id,from_me,push_name,type,content,status,msg_timestamp")
+      .eq("instance", instance)
       .eq("remote_jid", jid)
       .order("msg_timestamp", { ascending: true })
-      .limit(500);
+      .limit(1000);
     if (data) setMessages(data as ZapMessage[]);
-  }, [jid]);
+  }, [instance, jid]);
 
   useEffect(() => {
     if (!ready) return;
     load();
     const channel = supabaseBrowser()
-      .channel(`chat-${jid}`)
+      .channel(`chat-${instance}-${jid}`)
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "zap_messages", filter: `remote_jid=eq.${jid}` },
         (payload) => {
+          const m = (payload.new ?? {}) as ZapMessage;
+          if (m.instance !== instance) return; // ignora outras contas com o mesmo contato
           if (payload.eventType === "INSERT") {
-            const m = payload.new as ZapMessage;
-            setMessages((prev) =>
-              prev.some((p) => p.message_id === m.message_id) ? prev : [...prev, m]
-            );
+            setMessages((prev) => (prev.some((p) => p.message_id === m.message_id) ? prev : [...prev, m]));
           } else if (payload.eventType === "UPDATE") {
-            const m = payload.new as ZapMessage;
             setMessages((prev) => prev.map((p) => (p.message_id === m.message_id ? { ...p, ...m } : p)));
           }
         }
       )
       .subscribe();
-    // fallback: enquanto o realtime não estiver habilitado na tabela, sincroniza a cada 5s
     const timer = setInterval(() => {
       if (document.visibilityState === "visible") load();
     }, 5000);
@@ -107,13 +113,13 @@ export default function ChatPage({ params }: { params: Promise<{ jid: string }> 
       clearInterval(timer);
       supabaseBrowser().removeChannel(channel);
     };
-  }, [ready, jid, load]);
+  }, [ready, instance, jid, load]);
 
   useEffect(() => {
-    if (messages.length > 0) {
-      markAsRead(jid, messages);
+    if (messages.length > 0 && !readOnly) {
+      markAsRead(jid, instance, messages);
     }
-  }, [jid, messages.length]);
+  }, [jid, instance, messages.length, readOnly]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -126,11 +132,10 @@ export default function ChatPage({ params }: { params: Promise<{ jid: string }> 
     setSending(true);
     setText("");
 
-    // bolha otimista imediata
     const tempId = `local-${Date.now()}`;
     const optimistic: ZapMessage = {
       id: -Date.now(),
-      instance: "super",
+      instance,
       remote_jid: jid,
       message_id: tempId,
       from_me: true,
@@ -146,18 +151,15 @@ export default function ChatPage({ params }: { params: Promise<{ jid: string }> 
       const res = await fetch("/api/send", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ jid, text: body }),
+        body: JSON.stringify({ jid, instance, text: body }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error);
-      // troca o id temporário pelo real (o realtime fará o resto)
       setMessages((prev) =>
         prev.map((m) => (m.message_id === tempId ? { ...m, message_id: json.id ?? tempId, status: "sent" } : m))
       );
     } catch {
-      setMessages((prev) =>
-        prev.map((m) => (m.message_id === tempId ? { ...m, status: "erro" } : m))
-      );
+      setMessages((prev) => prev.map((m) => (m.message_id === tempId ? { ...m, status: "erro" } : m)));
     } finally {
       setSending(false);
     }
@@ -173,11 +175,11 @@ export default function ChatPage({ params }: { params: Promise<{ jid: string }> 
       const res = await fetch("/api/send-media", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ jid, base64, mimetype, fileName: file.name, caption }),
+        body: JSON.stringify({ jid, instance, base64, mimetype, fileName: file.name, caption }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error);
-      await load(); // a foto enviada aparece via linha gravada pelo servidor
+      await load();
     } catch {
       alert("Falha ao enviar a imagem");
       setText(caption);
@@ -194,19 +196,20 @@ export default function ChatPage({ params }: { params: Promise<{ jid: string }> 
     <main className="mx-auto flex h-dvh max-w-lg flex-col">
       <header
         className="flex items-center gap-3 px-3 py-3 text-white"
-        style={{ background: "var(--wa-header)", paddingTop: "max(0.75rem, env(safe-area-inset-top))" }}
+        style={{ background: headerColor, paddingTop: "max(0.75rem, env(safe-area-inset-top))" }}
       >
         <Link href="/" className="px-1 text-xl" aria-label="Voltar">
           ←
         </Link>
-        <div
-          className="flex h-9 w-9 items-center justify-center rounded-full bg-white/20 font-semibold"
-        >
+        <div className="flex h-9 w-9 items-center justify-center rounded-full bg-white/20 font-semibold">
           {name[0]?.toUpperCase() ?? "#"}
         </div>
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <p className="truncate font-medium leading-tight">{name}</p>
-          <p className="truncate text-xs opacity-75">{jidToPhone(jid)}</p>
+          <p className="truncate text-xs opacity-75">
+            {jidToPhone(jid)}
+            {account ? ` · ${account.label}` : ""}
+          </p>
         </div>
       </header>
 
@@ -235,7 +238,7 @@ export default function ChatPage({ params }: { params: Promise<{ jid: string }> 
                   {(m.type === "image" || m.type === "sticker") && !m.message_id.startsWith("local-") && (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img
-                      src={`/api/media?id=${encodeURIComponent(m.message_id)}`}
+                      src={`/api/media?id=${encodeURIComponent(m.message_id)}&a=${encodeURIComponent(m.instance)}`}
                       alt="mídia"
                       loading="lazy"
                       className="mb-1 max-h-80 w-auto max-w-full cursor-pointer rounded-md"
@@ -256,47 +259,56 @@ export default function ChatPage({ params }: { params: Promise<{ jid: string }> 
         <div ref={bottomRef} />
       </div>
 
-      <form
-        onSubmit={handleSend}
-        className="flex items-center gap-2 p-2"
-        style={{ background: "var(--wa-panel)", paddingBottom: "max(0.5rem, env(safe-area-inset-bottom))" }}
-      >
-        <label
-          className="flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-full text-xl"
-          style={{ background: "var(--wa-bg)", color: "var(--wa-text-muted)" }}
-          aria-label="Anexar imagem"
-          title="Enviar imagem"
+      {readOnly ? (
+        <div
+          className="p-3 text-center text-sm"
+          style={{ background: "var(--wa-panel)", color: "var(--wa-text-muted)", paddingBottom: "max(0.75rem, env(safe-area-inset-bottom))" }}
         >
-          📎
+          📁 Arquivo importado — somente leitura (esta conta não está conectada)
+        </div>
+      ) : (
+        <form
+          onSubmit={handleSend}
+          className="flex items-center gap-2 p-2"
+          style={{ background: "var(--wa-panel)", paddingBottom: "max(0.5rem, env(safe-area-inset-bottom))" }}
+        >
+          <label
+            className="flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-full text-xl"
+            style={{ background: "var(--wa-bg)", color: "var(--wa-text-muted)" }}
+            aria-label="Anexar imagem"
+            title="Enviar imagem"
+          >
+            📎
+            <input
+              type="file"
+              accept="image/*"
+              className="hidden"
+              disabled={sending}
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) handleSendImage(f);
+                e.target.value = "";
+              }}
+            />
+          </label>
           <input
-            type="file"
-            accept="image/*"
-            className="hidden"
-            disabled={sending}
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              if (f) handleSendImage(f);
-              e.target.value = "";
-            }}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            placeholder="Mensagem"
+            className="flex-1 rounded-full px-4 py-2.5 outline-none"
+            style={{ background: "var(--wa-bg)", color: "var(--wa-text)" }}
           />
-        </label>
-        <input
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          placeholder="Mensagem"
-          className="flex-1 rounded-full px-4 py-2.5 outline-none"
-          style={{ background: "var(--wa-bg)", color: "var(--wa-text)" }}
-        />
-        <button
-          type="submit"
-          disabled={!text.trim() || sending}
-          aria-label="Enviar"
-          className="flex h-11 w-11 items-center justify-center rounded-full text-white disabled:opacity-50"
-          style={{ background: "var(--wa-accent)" }}
-        >
-          ➤
-        </button>
-      </form>
+          <button
+            type="submit"
+            disabled={!text.trim() || sending}
+            aria-label="Enviar"
+            className="flex h-11 w-11 items-center justify-center rounded-full text-white disabled:opacity-50"
+            style={{ background: "var(--wa-accent)" }}
+          >
+            ➤
+          </button>
+        </form>
+      )}
     </main>
   );
 }

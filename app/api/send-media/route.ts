@@ -1,20 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase-server";
+import { assertLiveInstance } from "@/lib/accounts";
 import { jidToPhone } from "@/lib/normalize";
+import { instanceName } from "@/lib/evolution";
 
 const BASE = process.env.EVOLUTION_URL!;
-const INSTANCE = process.env.EVOLUTION_INSTANCE!;
 const APIKEY = process.env.EVOLUTION_APIKEY!;
 
-// Envia imagem: body JSON { jid, base64 (sem prefixo data:), mimetype, fileName?, caption? }
+// Envia imagem: body JSON { jid, base64 (sem prefixo data:), mimetype, fileName?, caption?, instance? }
 export async function POST(req: NextRequest) {
-  const { jid, base64, mimetype, fileName, caption } = await req.json().catch(() => ({}));
+  const { jid, base64, mimetype, fileName, caption, instance } = await req.json().catch(() => ({}));
+  const inst = instance || instanceName;
   if (!jid || !base64 || !mimetype) {
     return NextResponse.json({ error: "jid, base64 e mimetype são obrigatórios" }, { status: 400 });
   }
 
   try {
-    const res = await fetch(`${BASE}/message/sendMedia/${INSTANCE}`, {
+    await assertLiveInstance(inst);
+    const res = await fetch(`${BASE}/message/sendMedia/${inst}`, {
       method: "POST",
       headers: { "Content-Type": "application/json", apikey: APIKEY },
       body: JSON.stringify({
@@ -43,7 +46,7 @@ export async function POST(req: NextRequest) {
         .catch(() => null);
       await db.from("zap_messages").upsert(
         {
-          instance: INSTANCE,
+          instance: inst,
           remote_jid: jid,
           message_id: messageId,
           from_me: true,

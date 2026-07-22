@@ -1,4 +1,4 @@
-// Utilitários compartilhados entre bridge.mjs e backfill.mjs
+// Utilitários compartilhados entre bridge.mjs, backfill.mjs e import-msgstore.mjs
 import { createClient } from "@supabase/supabase-js";
 import { readFileSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -21,6 +21,21 @@ export const INSTANCE = process.env.EVOLUTION_INSTANCE ?? "super";
 export const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false },
 });
+
+// Lista as instâncias AO VIVO (kind='live') cadastradas em zap_accounts.
+// Se a tabela não existir ou estiver vazia, cai na instância única do .env.
+export async function listLiveInstances() {
+  try {
+    const { data, error } = await supabase
+      .from("zap_accounts")
+      .select("instance,kind")
+      .eq("kind", "live");
+    if (error || !data?.length) return [INSTANCE];
+    return data.map((a) => a.instance);
+  } catch {
+    return [INSTANCE];
+  }
+}
 
 // --- normalização (espelha lib/normalize.ts) ---
 const TYPE_MAP = {
@@ -56,14 +71,14 @@ function canonicalJid(key) {
   return jid.replace(/:\d+@/, "@");
 }
 
-export function normalizeUpsert(data) {
+export function normalizeUpsert(data, instance = INSTANCE) {
   const key = data?.key;
   const jid = canonicalJid(key);
   if (!jid || !key?.id || jid === "status@broadcast") return null;
   const { type, content } = extractContent(data.message);
   const ts = data.messageTimestamp ? new Date(Number(data.messageTimestamp) * 1000) : new Date();
   return {
-    instance: INSTANCE,
+    instance,
     remote_jid: jid,
     message_id: key.id,
     from_me: !!key.fromMe,
@@ -77,11 +92,10 @@ export function normalizeUpsert(data) {
 }
 
 export async function upsertRows(rows) {
-  // dedupe por message_id dentro do lote (findMessages pode repetir a mesma
-  // mensagem em versões @lid e @s.whatsapp.net) — o Postgres rejeita
+  // dedupe por (instance, message_id) dentro do lote — o Postgres rejeita
   // ON CONFLICT que afete a mesma linha duas vezes
   const byId = new Map();
-  for (const r of rows) if (r) byId.set(r.message_id, r);
+  for (const r of rows) if (r) byId.set(`${r.instance}|${r.message_id}`, r);
   const valid = [...byId.values()];
   if (!valid.length) return 0;
   const { error } = await supabase
@@ -91,8 +105,8 @@ export async function upsertRows(rows) {
   return valid.length;
 }
 
-export async function findMessages(page = 1, offset = 25) {
-  const res = await fetch(`${EVOLUTION_URL}/chat/findMessages/${INSTANCE}`, {
+export async function findMessages(instance = INSTANCE, page = 1, offset = 25) {
+  const res = await fetch(`${EVOLUTION_URL}/chat/findMessages/${instance}`, {
     method: "POST",
     headers: { "Content-Type": "application/json", apikey: APIKEY },
     body: JSON.stringify({ page, offset }),

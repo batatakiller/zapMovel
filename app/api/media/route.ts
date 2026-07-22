@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase-server";
 
 const BASE = process.env.EVOLUTION_URL!;
-const INSTANCE = process.env.EVOLUTION_INSTANCE!;
+const DEFAULT_INSTANCE = process.env.EVOLUTION_INSTANCE ?? "super";
 const APIKEY = process.env.EVOLUTION_APIKEY!;
 const SUPABASE_URL = process.env.SUPABASE_URL!;
 
@@ -23,10 +23,11 @@ function bucketUrl(name: string) {
 
 // Serve a mídia de uma mensagem.
 // 1º tenta o bucket chat_media (permanente, compartilhado com o bot);
-// se não existir, busca no Evolution, grava no bucket e responde.
-// GET /api/media?id=<message_id>
+// se não existir, busca no Evolution da conta certa, grava no bucket e responde.
+// GET /api/media?id=<message_id>&a=<instance>
 export async function GET(req: NextRequest) {
   const id = req.nextUrl.searchParams.get("id");
+  const acc = req.nextUrl.searchParams.get("a");
   if (!id || !/^[A-Za-z0-9_-]+$/.test(id)) {
     return NextResponse.json({ error: "id inválido" }, { status: 400 });
   }
@@ -37,19 +38,18 @@ export async function GET(req: NextRequest) {
     if (head.ok) return NextResponse.redirect(bucketUrl(`${id}.${ext}`), 302);
   }
 
-  // 2) fallback: Evolution
+  // 2) fallback: Evolution da conta dona da mensagem (o message_id é único no WhatsApp)
   const db = supabaseAdmin();
-  const { data: row } = await db
-    .from("zap_messages")
-    .select("raw")
-    .eq("instance", INSTANCE)
-    .eq("message_id", id)
-    .single();
+  let query = db.from("zap_messages").select("raw,instance").eq("message_id", id);
+  if (acc) query = query.eq("instance", acc);
+  const { data: row } = await query.limit(1).maybeSingle();
 
   const key = (row?.raw as any)?.key;
-  if (!key?.id) return NextResponse.json({ error: "mensagem não encontrada" }, { status: 404 });
+  const instance = row?.instance ?? acc ?? DEFAULT_INSTANCE;
+  // sem raw.key não dá para pedir ao Evolution (ex.: mensagem importada de backup)
+  if (!key?.id) return NextResponse.json({ error: "mídia não disponível para esta mensagem" }, { status: 404 });
 
-  const res = await fetch(`${BASE}/chat/getBase64FromMediaMessage/${INSTANCE}`, {
+  const res = await fetch(`${BASE}/chat/getBase64FromMediaMessage/${instance}`, {
     method: "POST",
     headers: { "Content-Type": "application/json", apikey: APIKEY },
     body: JSON.stringify({ message: { key }, convertToMp4: false }),

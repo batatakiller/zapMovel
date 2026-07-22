@@ -1,90 +1,150 @@
-// Ponte Evolution -> Supabase (zap_messages).
-// 1) Tenta WebSocket (tempo real instantâneo — requer WEBSOCKET_ENABLED=true no servidor Evolution).
-// 2) Se o socket não responder, faz polling do findMessages a cada POLL_MS (padrão 3s).
+// Ponte Evolution -> Supabase (zap_messages), com suporte a VÁRIAS contas.
+// Para cada instância AO VIVO cadastrada em zap_accounts (kind='live'):
+//   1) Tenta WebSocket (tempo real — requer WEBSOCKET_ENABLED=true no Evolution).
+//   2) Se o socket não responder, faz polling do findMessages a cada POLL_MS.
+// Novas contas adicionadas no app são detectadas a cada ACCOUNTS_REFRESH_MS.
 // Rode junto com o dev server: npm run bridge
 
 import { io } from "socket.io-client";
-import { EVOLUTION_URL, INSTANCE, normalizeUpsert, normStatus, upsertRows, findMessages, supabase } from "./evo-common.mjs";
+import {
+  EVOLUTION_URL,
+  normalizeUpsert,
+  normStatus,
+  upsertRows,
+  findMessages,
+  listLiveInstances,
+  supabase,
+} from "./evo-common.mjs";
 
 const POLL_MS = Number(process.env.POLL_MS ?? 3000);
-let mode = "connecting"; // connecting | websocket | polling
-let pollTimer = null;
+const ACCOUNTS_REFRESH_MS = Number(process.env.ACCOUNTS_REFRESH_MS ?? 30000);
 
-async function saveUpsert(data) {
-  const row = normalizeUpsert(data?.messages?.[0] ?? data);
-  if (!row) return;
-  try {
-    await upsertRows([row]);
-    console.log(`[bridge] ${row.from_me ? "→" : "←"} ${row.remote_jid}: ${String(row.content).slice(0, 60)}`);
-  } catch (e) {
-    console.error("[bridge] erro ao gravar:", e.message);
+// Um "worker" cuida de uma única instância (socket + fallback de polling).
+class InstanceWorker {
+  constructor(instance) {
+    this.instance = instance;
+    this.mode = "connecting";
+    this.pollTimer = null;
+    this.wsFailures = 0;
+    this.socket = null;
+  }
+
+  log(msg) {
+    console.log(`[bridge:${this.instance}] ${msg}`);
+  }
+
+  async saveUpsert(data) {
+    const row = normalizeUpsert(data?.messages?.[0] ?? data, this.instance);
+    if (!row) return;
+    try {
+      await upsertRows([row]);
+      this.log(`${row.from_me ? "→" : "←"} ${row.remote_jid}: ${String(row.content).slice(0, 60)}`);
+    } catch (e) {
+      this.log(`erro ao gravar: ${e.message}`);
+    }
+  }
+
+  async saveUpdate(data) {
+    const items = Array.isArray(data) ? data : [data];
+    for (const u of items) {
+      const id = u?.keyId ?? u?.key?.id;
+      if (!id || u?.status === undefined) continue;
+      const { error } = await supabase
+        .from("zap_messages")
+        .update({ status: normStatus(u.status) })
+        .eq("instance", this.instance)
+        .eq("message_id", id);
+      if (error) this.log(`erro status: ${error.message}`);
+    }
+  }
+
+  async pollOnce() {
+    try {
+      const { records } = await findMessages(this.instance, 1, 30);
+      const rows = (records ?? []).map((r) => normalizeUpsert(r, this.instance));
+      const n = await upsertRows(rows);
+      if (process.env.DEBUG) this.log(`poll: ${n} mensagens sincronizadas`);
+    } catch (e) {
+      this.log(`poll falhou: ${e.message}`);
+    }
+  }
+
+  startPolling() {
+    if (this.pollTimer) return;
+    this.mode = "polling";
+    this.log(`modo POLLING ativo (${POLL_MS}ms). Para tempo real, defina WEBSOCKET_ENABLED=true no Evolution.`);
+    this.pollTimer = setInterval(() => this.pollOnce(), POLL_MS);
+    this.pollOnce();
+  }
+
+  stopPolling() {
+    if (this.pollTimer) {
+      clearInterval(this.pollTimer);
+      this.pollTimer = null;
+    }
+  }
+
+  start() {
+    const url = `${EVOLUTION_URL}/${this.instance}`;
+    this.log(`tentando websocket em ${url} ...`);
+    this.socket = io(url, { transports: ["websocket"], reconnection: true, reconnectionDelay: 5000 });
+
+    this.socket.on("connect", () => {
+      this.wsFailures = 0;
+      this.mode = "websocket";
+      this.stopPolling();
+      this.log(`modo WEBSOCKET ativo (tempo real, id ${this.socket.id})`);
+    });
+    this.socket.on("disconnect", (r) => {
+      this.log(`websocket desconectado: ${r}`);
+      this.startPolling();
+    });
+    this.socket.on("connect_error", () => {
+      this.wsFailures++;
+      if (this.wsFailures === 2) this.startPolling();
+    });
+    this.socket.on("messages.upsert", (p) => this.saveUpsert(p?.data ?? p));
+    this.socket.on("send.message", (p) => this.saveUpsert(p?.data ?? p));
+    this.socket.on("messages.update", (p) => this.saveUpdate(p?.data ?? p));
+  }
+
+  stop() {
+    this.stopPolling();
+    this.socket?.close();
   }
 }
 
-async function saveUpdate(data) {
-  const items = Array.isArray(data) ? data : [data];
-  for (const u of items) {
-    const id = u?.keyId ?? u?.key?.id;
-    if (!id || u?.status === undefined) continue;
-    const { error } = await supabase
-      .from("zap_messages")
-      .update({ status: normStatus(u.status) })
-      .eq("instance", INSTANCE)
-      .eq("message_id", id);
-    if (error) console.error("[bridge] erro status:", error.message);
+// ---------- gerência das contas ----------
+const workers = new Map(); // instance -> InstanceWorker
+
+async function syncWorkers() {
+  const live = await listLiveInstances();
+  const wanted = new Set(live);
+
+  // adiciona workers para instâncias novas
+  for (const instance of wanted) {
+    if (!workers.has(instance)) {
+      const w = new InstanceWorker(instance);
+      workers.set(instance, w);
+      w.start();
+    }
+  }
+  // remove workers de contas que sumiram
+  for (const [instance, w] of workers) {
+    if (!wanted.has(instance)) {
+      w.stop();
+      workers.delete(instance);
+      console.log(`[bridge] conta '${instance}' removida — worker parado`);
+    }
   }
 }
 
-// ---------- polling ----------
-async function pollOnce() {
-  try {
-    const { records } = await findMessages(1, 30);
-    const rows = (records ?? []).map(normalizeUpsert);
-    const n = await upsertRows(rows);
-    if (process.env.DEBUG) console.log(`[bridge] poll: ${n} mensagens sincronizadas`);
-  } catch (e) {
-    console.error("[bridge] poll falhou:", e.message);
-  }
-}
+console.log("[bridge] iniciando ponte multi-conta ...");
+await syncWorkers();
+const accountsTimer = setInterval(syncWorkers, ACCOUNTS_REFRESH_MS);
 
-function startPolling() {
-  if (pollTimer) return;
-  mode = "polling";
-  console.log(`[bridge] modo POLLING ativo (${POLL_MS}ms). Para tempo real instantâneo, defina WEBSOCKET_ENABLED=true no servidor Evolution.`);
-  pollTimer = setInterval(pollOnce, POLL_MS);
-  pollOnce();
-}
-
-function stopPolling() {
-  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
-}
-
-// ---------- websocket ----------
-const url = `${EVOLUTION_URL}/${INSTANCE}`;
-console.log(`[bridge] tentando websocket em ${url} ...`);
-const socket = io(url, { transports: ["websocket"], reconnection: true, reconnectionDelay: 5000 });
-
-let wsFailures = 0;
-
-socket.on("connect", () => {
-  wsFailures = 0;
-  mode = "websocket";
-  stopPolling();
-  console.log(`[bridge] modo WEBSOCKET ativo (tempo real instantâneo, id ${socket.id})`);
+process.on("SIGINT", () => {
+  clearInterval(accountsTimer);
+  for (const w of workers.values()) w.stop();
+  process.exit(0);
 });
-
-socket.on("disconnect", (r) => {
-  console.log(`[bridge] websocket desconectado: ${r}`);
-  startPolling();
-});
-
-socket.on("connect_error", () => {
-  wsFailures++;
-  if (wsFailures === 2) startPolling(); // não espera demais para começar a sincronizar
-});
-
-socket.on("messages.upsert", (p) => saveUpsert(p?.data ?? p));
-socket.on("send.message", (p) => saveUpsert(p?.data ?? p));
-socket.on("messages.update", (p) => saveUpdate(p?.data ?? p));
-
-process.on("SIGINT", () => { stopPolling(); socket.close(); process.exit(0); });

@@ -11,7 +11,17 @@ export type ZapMessage = {
   msg_timestamp: string;
 };
 
+export type Account = {
+  instance: string;
+  label: string;
+  color: string;
+  phone: string | null;
+  kind: "live" | "archive";
+  sort_order: number;
+};
+
 export type Chat = {
+  instance: string;
   jid: string;
   name: string;
   last: ZapMessage;
