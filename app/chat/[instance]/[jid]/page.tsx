@@ -246,6 +246,15 @@ export default function ChatPage({ params }: { params: Promise<{ instance: strin
                       onError={(e) => ((e.target as HTMLImageElement).style.display = "none")}
                     />
                   )}
+                  {m.type === "audio" && !m.message_id.startsWith("local-") && (
+                    <audio
+                      controls
+                      preload="metadata"
+                      src={`/api/media?id=${encodeURIComponent(m.message_id)}&a=${encodeURIComponent(m.instance)}`}
+                      className="mb-1 h-10 max-w-full"
+                      style={{ minWidth: "230px" }}
+                    />
+                  )}
                   <p className="whitespace-pre-wrap break-words text-[15px]">{m.content}</p>
                   <p className="mt-0.5 flex items-center justify-end gap-1 text-[11px]" style={{ color: "var(--wa-text-muted)" }}>
                     {new Date(m.msg_timestamp).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}
