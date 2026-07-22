@@ -7,12 +7,12 @@
 
 import { io } from "socket.io-client";
 import {
-  EVOLUTION_URL,
   normalizeUpsert,
   normStatus,
   upsertRows,
   findMessages,
   listLiveInstances,
+  getEvolutionConfig,
   supabase,
 } from "./evo-common.mjs";
 
@@ -84,8 +84,13 @@ class InstanceWorker {
     }
   }
 
-  start() {
-    const url = `${EVOLUTION_URL}/${this.instance}`;
+  async start() {
+    const cfg = await getEvolutionConfig(this.instance);
+    if (!cfg.url || !cfg.apikey) {
+      this.log(`sem servidor Evolution configurado (nem próprio, nem padrão do .env) — worker parado`);
+      return;
+    }
+    const url = `${cfg.url}/${this.instance}`;
     this.log(`tentando websocket em ${url} ...`);
     this.socket = io(url, { transports: ["websocket"], reconnection: true, reconnectionDelay: 5000 });
 

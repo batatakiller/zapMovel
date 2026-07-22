@@ -37,6 +37,25 @@ export async function listLiveInstances() {
   }
 }
 
+// Resolve URL + apikey do Evolution para uma conta: usa a configuração
+// própria (zap_account_secrets) quando existir, senão cai no .env padrão.
+// Espelha lib/accounts.ts#getEvolutionConfig.
+export async function getEvolutionConfig(instance) {
+  try {
+    const { data } = await supabase
+      .from("zap_account_secrets")
+      .select("evolution_url,evolution_apikey")
+      .eq("instance", instance)
+      .maybeSingle();
+    return {
+      url: data?.evolution_url?.trim() || EVOLUTION_URL,
+      apikey: data?.evolution_apikey?.trim() || APIKEY,
+    };
+  } catch {
+    return { url: EVOLUTION_URL, apikey: APIKEY };
+  }
+}
+
 // --- normalização (espelha lib/normalize.ts) ---
 const TYPE_MAP = {
   imageMessage: ["image", "📷 Foto"],
@@ -106,9 +125,10 @@ export async function upsertRows(rows) {
 }
 
 export async function findMessages(instance = INSTANCE, page = 1, offset = 25) {
-  const res = await fetch(`${EVOLUTION_URL}/chat/findMessages/${instance}`, {
+  const cfg = await getEvolutionConfig(instance);
+  const res = await fetch(`${cfg.url}/chat/findMessages/${instance}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", apikey: APIKEY },
+    headers: { "Content-Type": "application/json", apikey: cfg.apikey },
     body: JSON.stringify({ page, offset }),
   });
   if (!res.ok) throw new Error(`findMessages HTTP ${res.status}`);

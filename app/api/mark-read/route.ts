@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { markRead, instanceName } from "@/lib/evolution";
-import { listAccounts } from "@/lib/accounts";
+import { listAccounts, getEvolutionConfig } from "@/lib/accounts";
 import { supabaseAdmin } from "@/lib/supabase-server";
 
 export async function POST(req: NextRequest) {
@@ -26,7 +26,8 @@ export async function POST(req: NextRequest) {
     const accounts = await listAccounts();
     const acc = accounts.find((a) => a.instance === inst);
     if (acc?.kind !== "archive") {
-      await markRead(inst, messages).catch((e) => console.error("markRead evolution:", e?.message));
+      const cfg = await getEvolutionConfig(inst);
+      await markRead(cfg, inst, messages).catch((e) => console.error("markRead evolution:", e?.message));
     }
 
     return NextResponse.json({ ok: true });

@@ -1,11 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase-server";
-import { assertLiveInstance } from "@/lib/accounts";
+import { assertLiveInstance, getEvolutionConfig } from "@/lib/accounts";
 import { jidToPhone } from "@/lib/normalize";
 import { instanceName } from "@/lib/evolution";
-
-const BASE = process.env.EVOLUTION_URL!;
-const APIKEY = process.env.EVOLUTION_APIKEY!;
 
 // Envia imagem: body JSON { jid, base64 (sem prefixo data:), mimetype, fileName?, caption?, instance? }
 export async function POST(req: NextRequest) {
@@ -17,9 +14,10 @@ export async function POST(req: NextRequest) {
 
   try {
     await assertLiveInstance(inst);
-    const res = await fetch(`${BASE}/message/sendMedia/${inst}`, {
+    const cfg = await getEvolutionConfig(inst);
+    const res = await fetch(`${cfg.url}/message/sendMedia/${inst}`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", apikey: APIKEY },
+      headers: { "Content-Type": "application/json", apikey: cfg.apikey },
       body: JSON.stringify({
         number: jidToPhone(jid),
         mediatype: "image",

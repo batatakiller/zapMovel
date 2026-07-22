@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase-server";
+import { getEvolutionConfig } from "@/lib/accounts";
 
-const BASE = process.env.EVOLUTION_URL!;
 const DEFAULT_INSTANCE = process.env.EVOLUTION_INSTANCE ?? "super";
-const APIKEY = process.env.EVOLUTION_APIKEY!;
 const SUPABASE_URL = process.env.SUPABASE_URL!;
 
 // mesmo padrão de nome usado pelo bot do n8n: chat_media/<message_id>.<ext>
@@ -49,9 +48,10 @@ export async function GET(req: NextRequest) {
   // sem raw.key não dá para pedir ao Evolution (ex.: mensagem importada de backup)
   if (!key?.id) return NextResponse.json({ error: "mídia não disponível para esta mensagem" }, { status: 404 });
 
-  const res = await fetch(`${BASE}/chat/getBase64FromMediaMessage/${instance}`, {
+  const cfg = await getEvolutionConfig(instance);
+  const res = await fetch(`${cfg.url}/chat/getBase64FromMediaMessage/${instance}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", apikey: APIKEY },
+    headers: { "Content-Type": "application/json", apikey: cfg.apikey },
     body: JSON.stringify({ message: { key }, convertToMp4: false }),
     cache: "no-store",
   });

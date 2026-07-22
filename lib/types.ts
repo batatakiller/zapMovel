@@ -18,6 +18,7 @@ export type Account = {
   phone: string | null;
   kind: "live" | "archive";
   sort_order: number;
+  hasCustomEvolution?: boolean;
 };
 
 export type Chat = {

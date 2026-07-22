@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { connectInstance, connectionState } from "@/lib/evolution";
+import { getEvolutionConfig } from "@/lib/accounts";
 
 // GET /api/accounts/<instance>/qr — devolve o QR code (base64) para parear o
 // número e o estado atual da conexão. O app chama de tempos em tempos até o
@@ -8,11 +9,12 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ ins
   const { instance } = await params;
 
   try {
-    const state = await connectionState(instance);
+    const cfg = await getEvolutionConfig(instance);
+    const state = await connectionState(cfg, instance);
     if (state === "open") {
       return NextResponse.json({ state, qr: null, connected: true });
     }
-    const conn = await connectInstance(instance);
+    const conn = await connectInstance(cfg, instance);
     const qr = conn?.base64 ?? conn?.qrcode?.base64 ?? null;
     const pairingCode = conn?.pairingCode ?? conn?.code ?? null;
     return NextResponse.json({ state, qr, pairingCode, connected: false });

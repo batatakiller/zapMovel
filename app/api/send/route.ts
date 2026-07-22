@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { sendText, instanceName } from "@/lib/evolution";
-import { assertLiveInstance } from "@/lib/accounts";
+import { assertLiveInstance, getEvolutionConfig } from "@/lib/accounts";
 import { supabaseAdmin } from "@/lib/supabase-server";
 import { jidToPhone } from "@/lib/normalize";
 
@@ -13,7 +13,8 @@ export async function POST(req: NextRequest) {
 
   try {
     await assertLiveInstance(inst);
-    const result = await sendText(inst, jidToPhone(jid), text.trim());
+    const cfg = await getEvolutionConfig(inst);
+    const result = await sendText(cfg, inst, jidToPhone(jid), text.trim());
     const messageId = result?.key?.id;
 
     // insert otimista — o evento do websocket fará upsert na mesma linha

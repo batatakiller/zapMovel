@@ -7,9 +7,16 @@ export type Account = {
   phone: string | null;
   kind: "live" | "archive";
   sort_order: number;
+  hasCustomEvolution: boolean;
 };
 
+export type EvolutionConfig = { url: string; apikey: string };
+
 const DEFAULT_INSTANCE = process.env.EVOLUTION_INSTANCE ?? "super";
+const DEFAULT_EVOLUTION: EvolutionConfig = {
+  url: process.env.EVOLUTION_URL ?? "",
+  apikey: process.env.EVOLUTION_APIKEY ?? "",
+};
 
 // Lista as contas cadastradas. Se a tabela ainda não existir (migração não
 // rodada), devolve a instância única do .env para o app não quebrar.
@@ -21,9 +28,36 @@ export async function listAccounts(): Promise<Account[]> {
     .order("sort_order", { ascending: true })
     .order("label", { ascending: true });
   if (error || !data?.length) {
-    return [{ instance: DEFAULT_INSTANCE, label: "Principal", color: "#008069", phone: null, kind: "live", sort_order: 0 }];
+    return [
+      {
+        instance: DEFAULT_INSTANCE,
+        label: "Principal",
+        color: "#008069",
+        phone: null,
+        kind: "live",
+        sort_order: 0,
+        hasCustomEvolution: false,
+      },
+    ];
   }
-  return data as Account[];
+
+  // marca quais contas têm servidor Evolution próprio (sem expor a apikey)
+  let custom = new Set<string>();
+  try {
+    const { data: secrets } = await db.from("zap_account_secrets").select("instance,evolution_url,evolution_apikey");
+    custom = new Set(
+      (secrets ?? [])
+        .filter((s) => s.evolution_url?.trim() || s.evolution_apikey?.trim())
+        .map((s) => s.instance)
+    );
+  } catch {
+    /* tabela ainda não existe — nenhuma conta tem config própria */
+  }
+
+  return (data as Omit<Account, "hasCustomEvolution">[]).map((a) => ({
+    ...a,
+    hasCustomEvolution: custom.has(a.instance),
+  }));
 }
 
 // Valida que a instância existe e é 'live' (pode enviar/receber). Contas
@@ -33,4 +67,45 @@ export async function assertLiveInstance(instance: string): Promise<void> {
   const acc = accounts.find((a) => a.instance === instance);
   if (!acc) throw new Error(`conta '${instance}' não cadastrada`);
   if (acc.kind !== "live") throw new Error(`conta '${instance}' é somente leitura (arquivo importado)`);
+}
+
+// Resolve URL + apikey do Evolution para uma conta: usa a configuração
+// própria da conta (zap_account_secrets) quando existir, senão cai no .env.
+export async function getEvolutionConfig(instance: string): Promise<EvolutionConfig> {
+  try {
+    const db = supabaseAdmin();
+    const { data } = await db
+      .from("zap_account_secrets")
+      .select("evolution_url,evolution_apikey")
+      .eq("instance", instance)
+      .maybeSingle();
+    return {
+      url: data?.evolution_url?.trim() || DEFAULT_EVOLUTION.url,
+      apikey: data?.evolution_apikey?.trim() || DEFAULT_EVOLUTION.apikey,
+    };
+  } catch {
+    return DEFAULT_EVOLUTION;
+  }
+}
+
+// Salva/atualiza o servidor Evolution de uma conta. Passar null/"" limpa o
+// campo (volta a usar o padrão do .env). Não faz nada se ambos vierem vazios
+// e não houver registro (evita criar linha à toa).
+export async function setEvolutionConfig(
+  instance: string,
+  url: string | null | undefined,
+  apikey: string | null | undefined
+): Promise<void> {
+  const db = supabaseAdmin();
+  const cleanUrl = url?.trim() || null;
+  const cleanKey = apikey?.trim() || null;
+  const { error } = await db
+    .from("zap_account_secrets")
+    .upsert({ instance, evolution_url: cleanUrl, evolution_apikey: cleanKey }, { onConflict: "instance" });
+  if (error) throw new Error(`falha ao salvar servidor Evolution: ${error.message}`);
+}
+
+// Remove a configuração própria de uma conta (volta a usar o .env padrão).
+export async function clearEvolutionConfig(instance: string): Promise<void> {
+  await supabaseAdmin().from("zap_account_secrets").delete().eq("instance", instance);
 }

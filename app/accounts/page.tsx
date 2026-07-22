@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useSession } from "@/hooks/useSession";
-import { useAccounts } from "@/hooks/useAccounts";
+import type { Account } from "@/lib/types";
 
 const COLORS = ["#128C7E", "#25D366", "#0088cc", "#7E57C2", "#EF6C00", "#C62828", "#00838F", "#5D4037"];
 
@@ -11,17 +11,93 @@ function qrSrc(qr: string): string {
   return qr.startsWith("data:") ? qr : `data:image/png;base64,${qr}`;
 }
 
+// Campos de servidor Evolution reutilizados na criação e na edição.
+function EvolutionFields({
+  url,
+  setUrl,
+  apikey,
+  setApikey,
+  hint,
+}: {
+  url: string;
+  setUrl: (v: string) => void;
+  apikey: string;
+  setApikey: (v: string) => void;
+  hint: string;
+}) {
+  return (
+    <div className="flex flex-col gap-3 rounded-lg border border-dashed p-3" style={{ borderColor: "color-mix(in srgb, var(--wa-text) 20%, transparent)" }}>
+      <p className="text-xs" style={{ color: "var(--wa-text-muted)" }}>
+        {hint}
+      </p>
+      <div>
+        <label className="mb-1 block text-xs font-semibold" style={{ color: "var(--wa-text-muted)" }}>
+          URL do servidor Evolution
+        </label>
+        <input
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          placeholder="https://evolution2.meuservidor.com"
+          className="w-full rounded-lg px-3 py-2 outline-none"
+          style={{ background: "var(--wa-panel)", color: "var(--wa-text)" }}
+        />
+      </div>
+      <div>
+        <label className="mb-1 block text-xs font-semibold" style={{ color: "var(--wa-text-muted)" }}>
+          Apikey desse servidor
+        </label>
+        <input
+          type="password"
+          value={apikey}
+          onChange={(e) => setApikey(e.target.value)}
+          placeholder="••••••••"
+          className="w-full rounded-lg px-3 py-2 outline-none"
+          style={{ background: "var(--wa-panel)", color: "var(--wa-text)" }}
+        />
+      </div>
+    </div>
+  );
+}
+
 export default function AccountsPage() {
   const ready = useSession();
-  const { accounts, loaded } = useAccounts();
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [loaded, setLoaded] = useState(false);
+
+  const loadAccounts = useCallback(async () => {
+    try {
+      const res = await fetch("/api/accounts");
+      const json = await res.json();
+      setAccounts(json.accounts ?? []);
+    } finally {
+      setLoaded(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (ready) loadAccounts();
+  }, [ready, loadAccounts]);
 
   const [showForm, setShowForm] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [instance, setInstance] = useState("");
   const [label, setLabel] = useState("");
   const [color, setColor] = useState(COLORS[0]);
   const [phone, setPhone] = useState("");
+  const [evolutionUrl, setEvolutionUrl] = useState("");
+  const [evolutionApikey, setEvolutionApikey] = useState("");
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // edição de conta existente
+  const [editing, setEditing] = useState<Account | null>(null);
+  const [editLabel, setEditLabel] = useState("");
+  const [editColor, setEditColor] = useState("");
+  const [editPhone, setEditPhone] = useState("");
+  const [editEvoUrl, setEditEvoUrl] = useState("");
+  const [editEvoKey, setEditEvoKey] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
 
   // pareamento (QR)
   const [pairing, setPairing] = useState<string | null>(null); // instance sendo pareada
@@ -94,19 +170,91 @@ export default function AccountsPage() {
       const res = await fetch("/api/accounts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ instance: name, label: label.trim(), color, phone: phone.trim() }),
+        body: JSON.stringify({
+          instance: name,
+          label: label.trim(),
+          color,
+          phone: phone.trim(),
+          evolutionUrl: evolutionUrl.trim() || undefined,
+          evolutionApikey: evolutionApikey.trim() || undefined,
+        }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error);
       setShowForm(false);
+      setShowAdvanced(false);
       setInstance("");
       setLabel("");
       setPhone("");
+      setEvolutionUrl("");
+      setEvolutionApikey("");
+      await loadAccounts();
       startPairing(name);
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setCreating(false);
+    }
+  }
+
+  function openEdit(a: Account) {
+    setEditing(a);
+    setEditLabel(a.label);
+    setEditColor(a.color);
+    setEditPhone(a.phone ?? "");
+    setEditEvoUrl("");
+    setEditEvoKey("");
+    setEditError(null);
+  }
+
+  async function handleSaveEdit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!editing) return;
+    setSaving(true);
+    setEditError(null);
+    try {
+      const res = await fetch(`/api/accounts/${encodeURIComponent(editing.instance)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          label: editLabel.trim(),
+          color: editColor,
+          phone: editPhone.trim(),
+          evolutionUrl: editEvoUrl.trim() || undefined,
+          evolutionApikey: editEvoKey.trim() || undefined,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error);
+      setEditing(null);
+      await loadAccounts();
+    } catch (e) {
+      setEditError((e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleResetEvolution() {
+    if (!editing) return;
+    setSaving(true);
+    setEditError(null);
+    try {
+      const res = await fetch(`/api/accounts/${encodeURIComponent(editing.instance)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ resetEvolution: true }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error);
+      setEditing({ ...editing, hasCustomEvolution: false });
+      setEditEvoUrl("");
+      setEditEvoKey("");
+      loadAccounts();
+    } catch (e) {
+      setEditError((e as Error).message);
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -140,8 +288,18 @@ export default function AccountsPage() {
                 <p className="truncate text-sm" style={{ color: "var(--wa-text-muted)" }}>
                   {a.phone ? `${a.phone} · ` : ""}
                   {a.kind === "live" ? "conectada (ao vivo)" : "arquivo importado (só leitura)"}
+                  {a.hasCustomEvolution ? " · servidor próprio" : ""}
                 </p>
               </div>
+              <button
+                onClick={() => openEdit(a)}
+                className="shrink-0 rounded-full px-2.5 py-1.5 text-sm"
+                style={{ background: "var(--wa-bg)", color: "var(--wa-text-muted)" }}
+                title="Editar conta"
+                aria-label="Editar conta"
+              >
+                ✏️
+              </button>
               {a.kind === "live" && (
                 <button
                   onClick={() => startPairing(a.instance)}
@@ -220,6 +378,26 @@ export default function AccountsPage() {
                   ))}
                 </div>
               </div>
+
+              {!showAdvanced ? (
+                <button
+                  type="button"
+                  onClick={() => setShowAdvanced(true)}
+                  className="self-start text-sm underline"
+                  style={{ color: "var(--wa-text-muted)" }}
+                >
+                  ⚙️ Avançado: este número está em outro servidor Evolution?
+                </button>
+              ) : (
+                <EvolutionFields
+                  url={evolutionUrl}
+                  setUrl={setEvolutionUrl}
+                  apikey={evolutionApikey}
+                  setApikey={setEvolutionApikey}
+                  hint="Deixe em branco para usar o mesmo servidor Evolution já configurado no projeto (.env). Só preencha se este WhatsApp roda numa instância Evolution diferente (outro VPS/Coolify)."
+                />
+              )}
+
               {error && <p className="text-sm text-red-500">{error}</p>}
               <div className="flex gap-2">
                 <button
@@ -232,7 +410,7 @@ export default function AccountsPage() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => { setShowForm(false); setError(null); }}
+                  onClick={() => { setShowForm(false); setShowAdvanced(false); setError(null); }}
                   className="rounded-lg px-4 py-2"
                   style={{ background: "var(--wa-panel)", color: "var(--wa-text)" }}
                 >
@@ -301,6 +479,106 @@ export default function AccountsPage() {
               {connected ? "Pronto" : "Fechar"}
             </button>
           </div>
+        </div>
+      )}
+
+      {/* modal de edição de conta */}
+      {editing && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6" onClick={() => setEditing(null)}>
+          <form
+            onSubmit={handleSaveEdit}
+            className="flex w-full max-w-sm flex-col gap-3 rounded-2xl p-6"
+            style={{ background: "var(--wa-panel)", color: "var(--wa-text)" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-lg font-semibold">Editar conta</h2>
+            <div>
+              <label className="mb-1 block text-xs font-semibold" style={{ color: "var(--wa-text-muted)" }}>
+                Nome da conta
+              </label>
+              <input
+                value={editLabel}
+                onChange={(e) => setEditLabel(e.target.value)}
+                className="w-full rounded-lg px-3 py-2 outline-none"
+                style={{ background: "var(--wa-bg)", color: "var(--wa-text)" }}
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-semibold" style={{ color: "var(--wa-text-muted)" }}>
+                Telefone (opcional)
+              </label>
+              <input
+                value={editPhone}
+                onChange={(e) => setEditPhone(e.target.value)}
+                className="w-full rounded-lg px-3 py-2 outline-none"
+                style={{ background: "var(--wa-bg)", color: "var(--wa-text)" }}
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-semibold" style={{ color: "var(--wa-text-muted)" }}>
+                Cor da etiqueta
+              </label>
+              <div className="flex flex-wrap gap-2">
+                {COLORS.map((c) => (
+                  <button
+                    key={c}
+                    type="button"
+                    onClick={() => setEditColor(c)}
+                    className="h-8 w-8 rounded-full"
+                    style={{ background: c, outline: editColor === c ? "3px solid var(--wa-text)" : "none" }}
+                    aria-label={`cor ${c}`}
+                  />
+                ))}
+              </div>
+            </div>
+
+            {editing.kind === "live" && (
+              <>
+                <EvolutionFields
+                  url={editEvoUrl}
+                  setUrl={setEditEvoUrl}
+                  apikey={editEvoKey}
+                  setApikey={setEditEvoKey}
+                  hint={
+                    editing.hasCustomEvolution
+                      ? "Esta conta já usa um servidor Evolution próprio. Preencha para substituir, ou use o botão abaixo para voltar ao padrão do projeto."
+                      : "Esta conta usa o servidor Evolution padrão do projeto. Preencha só se quiser conectá-la a outro servidor."
+                  }
+                />
+                {editing.hasCustomEvolution && (
+                  <button
+                    type="button"
+                    onClick={handleResetEvolution}
+                    disabled={saving}
+                    className="self-start text-sm underline disabled:opacity-50"
+                    style={{ color: "var(--wa-text-muted)" }}
+                  >
+                    Voltar a usar o servidor padrão do projeto
+                  </button>
+                )}
+              </>
+            )}
+
+            {editError && <p className="text-sm text-red-500">{editError}</p>}
+            <div className="flex gap-2">
+              <button
+                type="submit"
+                disabled={saving}
+                className="flex-1 rounded-lg px-4 py-2 text-white disabled:opacity-50"
+                style={{ background: "var(--wa-accent)" }}
+              >
+                {saving ? "Salvando..." : "Salvar"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setEditing(null)}
+                className="rounded-lg px-4 py-2"
+                style={{ background: "var(--wa-bg)", color: "var(--wa-text)" }}
+              >
+                Cancelar
+              </button>
+            </div>
+          </form>
         </div>
       )}
     </main>
