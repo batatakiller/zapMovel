@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import ResponsiveShell from "@/components/ResponsiveShell";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -19,7 +20,9 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="pt-BR">
-      <body className="antialiased">{children}</body>
+      <body className="antialiased">
+        <ResponsiveShell>{children}</ResponsiveShell>
+      </body>
     </html>
   );
 }

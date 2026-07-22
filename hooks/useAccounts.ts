@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 import type { Account } from "@/lib/types";
 
@@ -9,6 +9,10 @@ import type { Account } from "@/lib/types";
 export function useAccounts() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [loaded, setLoaded] = useState(false);
+  // no layout mestre-detalhe, a lista e a conversa ficam montadas ao mesmo
+  // tempo (desktop) — cada instância deste hook precisa de um canal próprio,
+  // senão a segunda .subscribe() no mesmo nome derruba a conexão.
+  const instanceId = useId();
 
   useEffect(() => {
     let alive = true;
@@ -22,14 +26,14 @@ export function useAccounts() {
     }
     load();
     const channel = supabaseBrowser()
-      .channel("accounts")
+      .channel(`accounts-${instanceId}`)
       .on("postgres_changes", { event: "*", schema: "public", table: "zap_accounts" }, () => load())
       .subscribe();
     return () => {
       alive = false;
       supabaseBrowser().removeChannel(channel);
     };
-  }, []);
+  }, [instanceId]);
 
   const byInstance = new Map(accounts.map((a) => [a.instance, a]));
   return { accounts, byInstance, loaded };

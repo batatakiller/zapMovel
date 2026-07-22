@@ -193,7 +193,7 @@ export default function ChatPage({ params }: { params: Promise<{ instance: strin
   let lastDay = "";
 
   return (
-    <main className="mx-auto flex h-dvh max-w-lg flex-col">
+    <div className="mx-auto flex h-full w-full max-w-lg flex-col md:mx-0 md:max-w-none">
       <header
         className="flex items-center gap-3 px-3 py-3 text-white"
         style={{ background: headerColor, paddingTop: "max(0.75rem, env(safe-area-inset-top))" }}
@@ -309,6 +309,6 @@ export default function ChatPage({ params }: { params: Promise<{ instance: strin
           </button>
         </form>
       )}
-    </main>
+    </div>
   );
 }
