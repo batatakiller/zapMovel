@@ -1,6 +1,7 @@
 import { supabaseAdmin } from "./supabase-server";
 import { normalizeUpsert, normalizeStatus, ZapRow, jidToPhone } from "./normalize";
 import { sendPushToAll } from "./push";
+import { cacheMediaForRow } from "./media-cache";
 
 // Grava/atualiza mensagens vindas do Evolution (webhook ou websocket).
 // Upsert por (instance, message_id): o mesmo evento pode chegar duas vezes
@@ -32,6 +33,11 @@ export async function ingestEvent(event: string, instance: string, data: any): P
           }).catch((e) => console.error("push:", e?.message))
         )
     );
+
+    // salva foto/áudio/vídeo/documento no bucket imediatamente — sem esperar
+    // alguém abrir a conversa. Evita perder mídia que expira no Evolution.
+    await Promise.all(rows.map((r) => cacheMediaForRow(r).catch((e) => console.error("cacheMedia:", e?.message))));
+
     return;
   }
 

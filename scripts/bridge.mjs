@@ -13,6 +13,7 @@ import {
   findMessages,
   listLiveInstances,
   getEvolutionConfig,
+  cacheMediaForRow,
   supabase,
 } from "./evo-common.mjs";
 
@@ -39,6 +40,7 @@ class InstanceWorker {
     try {
       await upsertRows([row]);
       this.log(`${row.from_me ? "→" : "←"} ${row.remote_jid}: ${String(row.content).slice(0, 60)}`);
+      cacheMediaForRow(row).catch((e) => this.log(`erro ao cachear mídia: ${e.message}`));
     } catch (e) {
       this.log(`erro ao gravar: ${e.message}`);
     }
@@ -61,9 +63,10 @@ class InstanceWorker {
   async pollOnce() {
     try {
       const { records } = await findMessages(this.instance, 1, 30);
-      const rows = (records ?? []).map((r) => normalizeUpsert(r, this.instance));
+      const rows = (records ?? []).map((r) => normalizeUpsert(r, this.instance)).filter(Boolean);
       const n = await upsertRows(rows);
       if (process.env.DEBUG) this.log(`poll: ${n} mensagens sincronizadas`);
+      for (const row of rows) cacheMediaForRow(row).catch((e) => this.log(`erro ao cachear mídia: ${e.message}`));
     } catch (e) {
       this.log(`poll falhou: ${e.message}`);
     }

@@ -1,28 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase-server";
 import { getEvolutionConfig } from "@/lib/accounts";
+import { KNOWN_MEDIA_EXTENSIONS, extFor } from "@/lib/media-cache";
 
 const DEFAULT_INSTANCE = process.env.EVOLUTION_INSTANCE ?? "super";
 const SUPABASE_URL = process.env.SUPABASE_URL!;
-
-// mesmo padrão de nome usado pelo bot do n8n: chat_media/<message_id>.<ext>
-const EXT: Record<string, string> = {
-  "image/jpeg": "jpg",
-  "image/png": "png",
-  "image/webp": "webp",
-  "video/mp4": "mp4",
-  "audio/ogg": "ogg",
-  "audio/mpeg": "mp3",
-};
-const extFor = (mime: string) => EXT[mime?.split(";")[0]] ?? (mime?.includes("video") ? "mp4" : "jpg");
 
 function bucketUrl(name: string) {
   return `${SUPABASE_URL}/storage/v1/object/public/chat_media/${name}`;
 }
 
 // Serve a mídia de uma mensagem.
-// 1º tenta o bucket chat_media (permanente, compartilhado com o bot);
-// se não existir, busca no Evolution da conta certa, grava no bucket e responde.
+// 1º tenta o bucket chat_media (permanente — normalmente já está lá, cacheado
+// no momento em que a mensagem chegou); se não existir, busca no Evolution da
+// conta certa, grava no bucket e responde.
 // GET /api/media?id=<message_id>&a=<instance>
 export async function GET(req: NextRequest) {
   const id = req.nextUrl.searchParams.get("id");
@@ -32,7 +23,7 @@ export async function GET(req: NextRequest) {
   }
 
   // 1) bucket primeiro (jpg é o mais comum, depois os outros formatos)
-  for (const ext of ["jpg", "png", "webp", "mp4", "ogg", "mp3"]) {
+  for (const ext of KNOWN_MEDIA_EXTENSIONS) {
     const head = await fetch(bucketUrl(`${id}.${ext}`), { method: "HEAD", cache: "no-store" });
     if (head.ok) return NextResponse.redirect(bucketUrl(`${id}.${ext}`), 302);
   }
