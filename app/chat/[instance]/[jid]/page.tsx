@@ -342,7 +342,27 @@ export default function ChatPage({ params }: { params: Promise<{ instance: strin
                       style={{ minWidth: "230px" }}
                     />
                   )}
-                  <p className="whitespace-pre-wrap break-words text-[15px]">{m.content}</p>
+                  {m.type === "video" && !m.message_id.startsWith("local-") && (
+                    <video
+                      controls
+                      preload="metadata"
+                      src={`/api/media?id=${encodeURIComponent(m.message_id)}&a=${encodeURIComponent(m.instance)}`}
+                      className="mb-1 max-h-80 w-auto max-w-full rounded-md"
+                    />
+                  )}
+                  {m.type === "document" && !m.message_id.startsWith("local-") ? (
+                    <a
+                      href={`/api/media?id=${encodeURIComponent(m.message_id)}&a=${encodeURIComponent(m.instance)}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-2 rounded-md px-2 py-1.5 text-[15px] underline"
+                      style={{ background: "color-mix(in srgb, var(--wa-text) 6%, transparent)" }}
+                    >
+                      {m.content || "📄 Documento"}
+                    </a>
+                  ) : (
+                    <p className="whitespace-pre-wrap break-words text-[15px]">{m.content}</p>
+                  )}
                   <div className="mt-0.5 flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2 text-xs" style={{ color: "var(--wa-text-muted)" }}>
                       {!readOnly && !m.message_id.startsWith("local-") && (
