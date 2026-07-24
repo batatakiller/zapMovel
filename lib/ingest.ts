@@ -44,6 +44,7 @@ export async function ingestEvent(event: string, instance: string, data: any): P
             title: r.push_name || jidToPhone(r.remote_jid),
             body: r.content ?? "Nova mensagem",
             jid: r.remote_jid,
+            instance: r.instance,
           }).catch((e) => console.error("push:", e?.message))
         )
     );

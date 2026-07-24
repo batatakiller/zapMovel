@@ -10,7 +10,7 @@ self.addEventListener("push", (event) => {
   } catch {
     data = { title: "ZapMóvel", body: event.data?.text() ?? "" };
   }
-  const { title = "ZapMóvel", body = "", jid = "", tag } = data;
+  const { title = "ZapMóvel", body = "", jid = "", instance = "", tag } = data;
   event.waitUntil(
     self.registration.showNotification(title, {
       body,
@@ -18,7 +18,7 @@ self.addEventListener("push", (event) => {
       renotify: true,
       icon: "/icon-192.png",
       badge: "/icon-192.png",
-      data: { jid },
+      data: { jid, instance },
     })
   );
 });
@@ -26,7 +26,11 @@ self.addEventListener("push", (event) => {
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   const jid = event.notification.data?.jid;
-  const url = jid ? `/chat/${encodeURIComponent(jid)}` : "/";
+  const instance = event.notification.data?.instance;
+  const url =
+    jid && instance
+      ? `/chat/${encodeURIComponent(instance)}/${encodeURIComponent(jid)}`
+      : "/";
   event.waitUntil(
     self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clients) => {
       for (const c of clients) {

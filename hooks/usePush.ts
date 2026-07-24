@@ -45,10 +45,34 @@ export function usePush() {
       }
       return;
     }
+    // Permissão já bloqueada nas configurações: requestPermission() não pergunta
+    // de novo — nenhum conserto no servidor reverte isso, só o próprio usuário
+    // liberando o site nas configurações do navegador.
+    if (Notification.permission === "denied") {
+      setState("denied");
+      alert(
+        "As notificações estão BLOQUEADAS para este site.\n\n" +
+          "Chrome (computador): abra chrome://settings/content/notifications, remova zapmovel.vercel.app da lista de \"Não têm permissão\", recarregue a página e toque no sino de novo.\n\n" +
+          "Ou clique no ícone de controles/cadeado à esquerda do endereço → Notificações → Permitir."
+      );
+      return;
+    }
+
+    const vapidKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
+    if (!vapidKey) {
+      alert("Configuração de notificações ausente no servidor (chave VAPID). Avise o administrador.");
+      return;
+    }
+
     try {
       const permission = await Notification.requestPermission();
       if (permission !== "granted") {
         setState(permission === "denied" ? "denied" : "default");
+        if (permission === "denied") {
+          alert(
+            "Você negou as notificações. Para ativar depois, libere este site nas configurações de notificações do navegador e toque no sino novamente."
+          );
+        }
         return;
       }
       const reg = await navigator.serviceWorker.ready;
@@ -56,18 +80,22 @@ export function usePush() {
         (await reg.pushManager.getSubscription()) ??
         (await reg.pushManager.subscribe({
           userVisibleOnly: true,
-          applicationServerKey: urlBase64ToUint8Array(process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY!),
+          applicationServerKey: urlBase64ToUint8Array(vapidKey),
         }));
       const res = await fetch("/api/push/subscribe", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ subscription }),
       });
-      if (!res.ok) throw new Error("falha ao registrar");
+      if (!res.ok) {
+        const detail = await res.text().catch(() => "");
+        throw new Error(`registro no servidor falhou (HTTP ${res.status}) ${detail}`.trim());
+      }
       setState("enabled");
-    } catch (e) {
+    } catch (e: any) {
       console.error("push enable:", e);
-      alert("Não foi possível ativar as notificações neste dispositivo.");
+      // mostra o erro REAL — o texto genérico anterior escondia a causa
+      alert(`Não foi possível ativar as notificações.\n\nDetalhe técnico: ${e?.name ?? "Erro"}: ${e?.message ?? e}`);
     }
   }, []);
 
