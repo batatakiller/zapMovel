@@ -162,3 +162,18 @@ export function jidToPhone(jid: string): string {
 export function isGroup(jid: string): boolean {
   return jid.endsWith("@g.us");
 }
+
+// O WhatsApp migrou os contatos que não estão na sua agenda para um
+// identificador "LID" (ex.: 209311070421082@lid), que esconde o telefone.
+export function isLid(jid: string): boolean {
+  return jid.endsWith("@lid");
+}
+
+// Rótulo de uma conversa sem nome conhecido. Um LID tem 15 dígitos e passa
+// facilmente por telefone — exibi-lo cru faria você tentar ligar para um número
+// que não existe. Marcamos como contato sem número, mantendo os últimos
+// dígitos só para diferenciar uma conversa da outra na lista.
+export function jidToLabel(jid: string): string {
+  if (isLid(jid)) return `Contato ·${jidToPhone(jid).slice(-4)}`;
+  return jidToPhone(jid);
+}

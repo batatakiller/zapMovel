@@ -198,10 +198,27 @@ def fetch_messages(con, since_id: int, limit: int, has_wa: bool):
     # o nome sai de wa_contacts (telefone) ou lid_display_name (LID); em grupo,
     # o assunto do próprio chat
     name_expr = "coalesce(ch.subject, ldn.display_name)"
+    phone_expr = "null"
     name_join = ""
     if has_wa:
-        name_expr = "coalesce(ch.subject, wc.display_name, wc.wa_name, ldn.display_name)"
-        name_join = "left join wa.wa_contacts wc on wc.jid = jc.raw_string"
+        # wa_address_book é a tabela que salva o dia: ela guarda jid '<n>@lid'
+        # JUNTO com o telefone e o nome — é o único lugar do aparelho onde o
+        # vínculo LID↔telefone sobreviveu. Cobre ~30-45% das conversas ativas;
+        # o resto só tem nome pela notificação.
+        name_expr = "coalesce(ch.subject, ab.display_name, wc.display_name, wc.wa_name, ldn.display_name)"
+        phone_expr = "ab.number"
+        # Agrupar por jid é obrigatório: a agenda tem o mesmo contato salvo mais
+        # de uma vez (90 jids repetidos neste aparelho), e um join direto
+        # multiplicaria a mensagem — o Postgres então rejeita o lote inteiro com
+        # "ON CONFLICT DO UPDATE command cannot affect row a second time".
+        name_join = """left join (
+            select jid, max(display_name) display_name, max(wa_name) wa_name
+            from wa.wa_contacts group by jid
+        ) wc on wc.jid = jc.raw_string
+        left join (
+            select jid, max(display_name) display_name, max(number) number
+            from wa.wa_address_book group by jid
+        ) ab on ab.jid = jc.raw_string"""
     return con.execute(
         f"""
         select
@@ -216,6 +233,7 @@ def fetch_messages(con, since_id: int, limit: int, has_wa: bool):
             jc.server        as chat_server,
             js.raw_string    as sender_jid,
             {name_expr}      as chat_name,
+            {phone_expr}     as chat_phone,
             mm.mime_type     as mime_type,
             mm.file_path     as file_path,
             mm.media_caption as caption,
@@ -272,6 +290,7 @@ def to_payload(row, instance):
         "media_path": row["file_path"],
         "mime_type": row["mime_type"],
         "sender_jid": row["sender_jid"],
+        "phone": row["chat_phone"],
         "is_group": row["chat_server"] == "g.us",
     }
 
@@ -306,6 +325,11 @@ def main():
     ap.add_argument("--batch", type=int, default=500, help="mensagens por requisição")
     ap.add_argument("--limit", type=int, default=0, help="máximo de mensagens neste ciclo (0 = sem limite)")
     ap.add_argument("--keep-db", action="store_true", help="não apaga o msgstore.db extraído")
+    ap.add_argument(
+        "--since-date",
+        help="carrega só a partir desta data (AAAA-MM-DD). Use na primeira carga para "
+        "limitar o volume; depois o estado assume e cada ciclo vira incremental.",
+    )
     args = ap.parse_args()
 
     load_env()
@@ -329,6 +353,25 @@ def main():
         dbs = extract_dbs(zip_path, tmp_dir)
         con = open_db(dbs)
         has_wa = "wa.db" in dbs
+
+        # --since-date vira um piso de _id: como o _id cresce junto com o tempo,
+        # basta achar a primeira mensagem da data e seguir daí pra frente. O
+        # estado continua sendo por _id, então os ciclos seguintes não precisam
+        # da flag de novo.
+        if args.since_date:
+            import datetime as _dt
+
+            try:
+                corte = int(_dt.datetime.strptime(args.since_date, "%Y-%m-%d").timestamp() * 1000)
+            except ValueError:
+                sys.exit("--since-date deve estar no formato AAAA-MM-DD")
+            row = con.execute(
+                "select min(_id) from message where timestamp >= ?", (corte,)
+            ).fetchone()
+            piso = (row[0] or 1) - 1
+            if piso > since_id:
+                log(f"--since-date {args.since_date}: começando do _id {piso}")
+                since_id = piso
 
         sent = 0
         max_id = since_id

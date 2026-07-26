@@ -6,6 +6,7 @@ export type Account = {
   color: string;
   phone: string | null;
   kind: "live" | "archive";
+  transport: "evolution" | "android";
   sort_order: number;
   hasCustomEvolution: boolean;
 };
@@ -27,7 +28,7 @@ export async function listAccounts(): Promise<Account[]> {
   const db = supabaseAdmin();
   const { data, error } = await db
     .from("zap_accounts")
-    .select("instance,label,color,phone,kind,sort_order")
+    .select("instance,label,color,phone,kind,transport,sort_order")
     .order("sort_order", { ascending: true })
     .order("label", { ascending: true });
   if (error || !data?.length) {
@@ -38,6 +39,7 @@ export async function listAccounts(): Promise<Account[]> {
         color: "#008069",
         phone: null,
         kind: "live",
+        transport: "evolution",
         sort_order: 0,
         hasCustomEvolution: false,
       },
@@ -70,6 +72,15 @@ export async function assertLiveInstance(instance: string): Promise<void> {
   const acc = accounts.find((a) => a.instance === instance);
   if (!acc) throw new Error(`conta '${instance}' não cadastrada`);
   if (acc.kind !== "live") throw new Error(`conta '${instance}' é somente leitura (arquivo importado)`);
+  // Conta do tablet não passa pelo Evolution. Sem esta guarda, o envio sairia
+  // pela conta errada — e com um LID no lugar do telefone, que não é um número
+  // discável. O caminho certo (fila zap_outbox + agente no aparelho) ainda não
+  // está pronto.
+  if (acc.transport === "android") {
+    throw new Error(
+      `conta '${instance}' usa o aparelho Android — envio pelo ZapMóvel ainda não implementado`
+    );
+  }
 }
 
 // Resolve URL + apikey do Evolution para uma conta: usa a configuração

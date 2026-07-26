@@ -20,7 +20,7 @@ import { useSession } from "@/hooks/useSession";
 import { useAccounts } from "@/hooks/useAccounts";
 import { useQuickReplies } from "@/hooks/useQuickReplies";
 import { useReactions } from "@/hooks/useReactions";
-import { jidToPhone } from "@/lib/normalize";
+import { jidToLabel } from "@/lib/normalize";
 import type { ZapMessage } from "@/lib/types";
 
 const REACT_EMOJIS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
@@ -86,7 +86,7 @@ export default function ChatPage({ params }: { params: Promise<{ instance: strin
   const [reactPickerFor, setReactPickerFor] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textInputRef = useRef<HTMLInputElement>(null);
-  const name = messages.find((m) => !m.from_me && m.push_name)?.push_name ?? jidToPhone(jid);
+  const name = messages.find((m) => !m.from_me && m.push_name)?.push_name ?? jidToLabel(jid);
 
   const account = byInstance.get(instance);
   const readOnly = account?.kind === "archive";
@@ -265,7 +265,7 @@ export default function ChatPage({ params }: { params: Promise<{ instance: strin
         <div className="min-w-0 flex-1">
           <p className="truncate font-medium leading-tight">{name}</p>
           <p className="truncate text-xs opacity-75">
-            {jidToPhone(jid)}
+            {jidToLabel(jid)}
             {account ? ` · ${account.label}` : ""}
           </p>
         </div>
@@ -305,7 +305,7 @@ export default function ChatPage({ params }: { params: Promise<{ instance: strin
                       style={{ borderColor: "var(--wa-accent)", background: "color-mix(in srgb, var(--wa-text) 6%, transparent)" }}
                     >
                       <p className="truncate text-xs font-semibold" style={{ color: "var(--wa-accent)" }}>
-                        {quoted.from_me ? "Você" : quoted.push_name || jidToPhone(jid)}
+                        {quoted.from_me ? "Você" : quoted.push_name || jidToLabel(jid)}
                       </p>
                       <p className="truncate text-xs" style={{ color: "var(--wa-text-muted)" }}>
                         {quotedPreviewText(quoted)}
@@ -442,7 +442,7 @@ export default function ChatPage({ params }: { params: Promise<{ instance: strin
             >
               <div className="min-w-0 flex-1 border-l-4 pl-2" style={{ borderColor: "var(--wa-accent)" }}>
                 <p className="truncate text-xs font-semibold" style={{ color: "var(--wa-accent)" }}>
-                  {replyingTo.from_me ? "Você" : replyingTo.push_name || jidToPhone(jid)}
+                  {replyingTo.from_me ? "Você" : replyingTo.push_name || jidToLabel(jid)}
                 </p>
                 <p className="truncate text-xs" style={{ color: "var(--wa-text-muted)" }}>
                   {quotedPreviewText(replyingTo)}

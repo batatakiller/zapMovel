@@ -6,7 +6,7 @@ import { supabaseBrowser } from "@/lib/supabase-browser";
 import { useSession } from "@/hooks/useSession";
 import { usePush } from "@/hooks/usePush";
 import { useAccounts } from "@/hooks/useAccounts";
-import { jidToPhone, isGroup } from "@/lib/normalize";
+import { jidToLabel, isGroup } from "@/lib/normalize";
 import type { ZapMessage, Chat, Account } from "@/lib/types";
 
 function formatTime(ts: string): string {
@@ -32,7 +32,7 @@ function buildChats(messages: ZapMessage[]): Chat[] {
       byKey.set(key, {
         instance: m.instance,
         jid: m.remote_jid,
-        name: (!m.from_me && m.push_name) || jidToPhone(m.remote_jid),
+        name: (!m.from_me && m.push_name) || jidToLabel(m.remote_jid),
         last: m,
         unread: isUnread ? 1 : 0,
       });
@@ -246,7 +246,7 @@ export default function ChatList() {
                       {c.name}
                     </p>
                     <p className="truncate text-sm" style={{ color: "var(--wa-text-muted)" }}>
-                      {jidToPhone(c.jid)}
+                      {jidToLabel(c.jid)}
                     </p>
                   </div>
                 </Link>
@@ -271,7 +271,7 @@ export default function ChatList() {
                   <div className="flex items-baseline justify-between gap-2">
                     <p className="flex items-center gap-1.5 truncate text-sm font-medium">
                       {multiAccount && <AccountDot acc={byInstance.get(m.instance)} />}
-                      {(!m.from_me && m.push_name) || jidToPhone(m.remote_jid)}
+                      {(!m.from_me && m.push_name) || jidToLabel(m.remote_jid)}
                     </p>
                     <span className="shrink-0 text-xs" style={{ color: "var(--wa-text-muted)" }}>
                       {formatTime(m.msg_timestamp)}

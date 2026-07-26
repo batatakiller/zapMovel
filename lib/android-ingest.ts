@@ -17,6 +17,7 @@ export type AndroidMessage = {
   media_path: string | null;
   mime_type: string | null;
   sender_jid: string | null;
+  phone: string | null; // só existe quando o contato está na agenda do aparelho
   is_group: boolean;
 };
 
@@ -42,29 +43,37 @@ export async function normalizeAndroidBatch(
     throw new Error("um lote deve conter mensagens de uma única instância");
   }
 
+  // Um upsert não pode tocar a mesma linha duas vezes: se o lote trouxer o
+  // mesmo message_id repetido, o Postgres rejeita a instrução inteira. A última
+  // ocorrência vence — num lote ordenado por _id, é a mais recente.
+  const porId = new Map<string, AndroidMessage>();
+  for (const m of messages) porId.set(m.message_id, m);
+  messages = [...porId.values()];
+
   const messageIds = [...new Set(messages.map((m) => m.message_id))];
   const dedupeKeys = [...new Set(messages.map((m) => m.dedupe_key).filter(Boolean))];
 
   // Quem já está no banco com o id real? (sync rodou de novo sobre o mesmo trecho)
-  const { data: existing, error: exErr } = await db
-    .from("zap_messages")
-    .select("message_id")
-    .eq("instance", instance)
-    .in("message_id", messageIds);
-  if (exErr) throw new Error(`consulta de existentes: ${exErr.message}`);
-  const alreadyReal = new Set((existing ?? []).map((r) => r.message_id));
+  const existing = await selectIn<{ message_id: string }>(
+    db,
+    "message_id",
+    messageIds,
+    (q) => q.select("message_id").eq("instance", instance),
+    "consulta de existentes"
+  );
+  const alreadyReal = new Set(existing.map((r) => r.message_id));
 
   // Quais linhas provisórias da notificação correspondem a este lote?
-  const { data: provisional, error: prErr } = await db
-    .from("zap_messages")
-    .select("id,dedupe_key")
-    .eq("instance", instance)
-    .eq("origin", "notif")
-    .in("dedupe_key", dedupeKeys.length ? dedupeKeys : ["__vazio__"]);
-  if (prErr) throw new Error(`consulta de provisórias: ${prErr.message}`);
+  const provisional = await selectIn<{ id: number; dedupe_key: string | null }>(
+    db,
+    "dedupe_key",
+    dedupeKeys,
+    (q) => q.select("id,dedupe_key").eq("instance", instance).eq("origin", "notif"),
+    "consulta de provisórias"
+  );
 
   const notifRowByKey = new Map<string, number>();
-  for (const r of provisional ?? []) {
+  for (const r of provisional) {
     // se houver mais de uma provisória com a mesma chave, a primeira ganha e a
     // outra permanece — some no próximo ciclo, quando sua própria chave casar
     if (r.dedupe_key && !notifRowByKey.has(r.dedupe_key)) notifRowByKey.set(r.dedupe_key, r.id);
@@ -122,7 +131,46 @@ export async function normalizeAndroidBatch(
   };
 }
 
+// O PostgREST serializa `.in()` na URL. Com um lote de 500 chaves de 40 chars a
+// URL passa de 20 KB e a requisição é recusada antes de chegar ao banco — o
+// sintoma é um "fetch failed" que não parece ter nada a ver com o tamanho.
+// Fatiar mantém cada URL pequena, ao custo de algumas idas a mais.
+const IN_CHUNK = 100;
+
+async function selectIn<T>(
+  db: SupabaseClient,
+  column: string,
+  values: string[],
+  build: (q: any) => any,
+  contexto: string
+): Promise<T[]> {
+  if (!values.length) return [];
+  const out: T[] = [];
+  for (let i = 0; i < values.length; i += IN_CHUNK) {
+    const { data, error } = await build(db.from("zap_messages")).in(
+      column,
+      values.slice(i, i + IN_CHUNK)
+    );
+    if (error) throw new Error(`${contexto}: ${error.message}`);
+    out.push(...((data ?? []) as T[]));
+  }
+  return out;
+}
+
 function toRow(m: AndroidMessage) {
+  // 85% das mensagens são texto puro, e para elas o raw seria só um punhado de
+  // nulos — em 650 mil linhas isso vira dezenas de MB à toa. Só guardamos raw
+  // quando há algo de fato a guardar.
+  const raw =
+    m.media_path || m.sender_jid || m.is_group
+      ? {
+          media_path: m.media_path,
+          mime_type: m.mime_type,
+          sender_jid: m.sender_jid,
+          is_group: m.is_group,
+        }
+      : null;
+
   return {
     instance: m.instance,
     remote_jid: m.remote_jid,
@@ -138,32 +186,31 @@ function toRow(m: AndroidMessage) {
     dedupe_key: m.dedupe_key,
     // media_path/mime_type ficam no raw: é o que o passo de upload de mídia usa
     // para achar o arquivo em /sdcard e mandar para o bucket chat_media
-    raw: {
-      media_path: m.media_path,
-      mime_type: m.mime_type,
-      sender_jid: m.sender_jid,
-      is_group: m.is_group,
-    },
+    raw,
   };
 }
 
-// Acumula o que se sabe sobre cada conversa. Para chats @lid o telefone não
-// existe no aparelho (o WhatsApp deixou de guardá-lo), então phone fica nulo
-// até que outra fonte — a notificação de um lead novo, ou a tela do chat —
-// preencha. O nome, quando o aparelho tem, já vem aqui.
+// Acumula o que se sabe sobre cada conversa LID. O telefone e o nome vêm da
+// wa_address_book do aparelho, que é o único lugar onde o vínculo LID↔telefone
+// sobreviveu — mas ela só cobre quem está salvo na agenda (~30-45% das
+// conversas ativas). Para o resto, phone/nome ficam nulos até a notificação ou
+// a tela do chat preencherem.
 async function upsertJidMap(
   db: SupabaseClient,
   instance: string,
   messages: AndroidMessage[]
 ): Promise<number> {
-  const byLid = new Map<string, { display_name: string | null }>();
+  type Info = { display_name: string | null; phone: string | null };
+  const byLid = new Map<string, Info>();
+
   for (const m of messages) {
     if (!m.remote_jid.endsWith("@lid")) continue;
     const prev = byLid.get(m.remote_jid);
-    // não deixa um nome conhecido ser sobrescrito por nulo de outra mensagem
-    if (!prev || (!prev.display_name && m.push_name)) {
-      byLid.set(m.remote_jid, { display_name: m.push_name });
-    }
+    // dentro do lote, o que tem informação vence o que não tem
+    byLid.set(m.remote_jid, {
+      display_name: m.push_name ?? prev?.display_name ?? null,
+      phone: m.phone ?? prev?.phone ?? null,
+    });
   }
   if (!byLid.size) return 0;
 
@@ -171,26 +218,34 @@ async function upsertJidMap(
     instance,
     lid,
     display_name: v.display_name,
+    phone: v.phone,
+    // o jid completo só faz sentido quando temos o número
+    jid: v.phone ? `${onlyDigits(v.phone)}@s.whatsapp.net` : null,
     source: "msgstore",
     updated_at: new Date().toISOString(),
   }));
 
-  // Um lote pode trazer o mesmo LID sem nome (mensagem de chat cujo contato o
-  // aparelho não conhece). Sobrescrever com nulo apagaria um nome já
-  // descoberto antes, então só quem tem nome faz update; o resto apenas
-  // registra o LID se ainda não existir.
-  const comNome = rows.filter((r) => r.display_name);
-  const semNome = rows.filter((r) => !r.display_name);
+  // Sobrescrever com nulo apagaria um nome/telefone já descoberto antes, então
+  // só quem traz informação faz update; o resto apenas registra o LID se ainda
+  // não existir, para a conversa constar no mapa.
+  const comDados = rows.filter((r) => r.display_name || r.phone);
+  const semDados = rows.filter((r) => !r.display_name && !r.phone);
 
-  if (comNome.length) {
-    const { error } = await db.from("zap_jid_map").upsert(comNome, { onConflict: "instance,lid" });
+  if (comDados.length) {
+    const { error } = await db.from("zap_jid_map").upsert(comDados, { onConflict: "instance,lid" });
     if (error) throw new Error(`upsert zap_jid_map: ${error.message}`);
   }
-  if (semNome.length) {
+  if (semDados.length) {
     const { error } = await db
       .from("zap_jid_map")
-      .upsert(semNome, { onConflict: "instance,lid", ignoreDuplicates: true });
+      .upsert(semDados, { onConflict: "instance,lid", ignoreDuplicates: true });
     if (error) throw new Error(`insert zap_jid_map: ${error.message}`);
   }
   return rows.length;
+}
+
+// A agenda guarda o número como o usuário digitou ("+55 11 95410-2891",
+// "11954102891"). O jid do WhatsApp só aceita dígitos.
+function onlyDigits(s: string) {
+  return s.replace(/\D/g, "");
 }
