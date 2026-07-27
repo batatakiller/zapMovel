@@ -95,6 +95,8 @@ public class OutboxPoller {
         c.setRequestMethod("POST");
         c.setRequestProperty("Content-Type", "application/json");
         c.setRequestProperty("Authorization", "Bearer " + cfg.token());
+        // ver comentário em Sender: sem isso, conexão reaproveitada morre
+        c.setRequestProperty("Connection", "close");
         c.setConnectTimeout(15000);
         c.setReadTimeout(30000);
         return c;

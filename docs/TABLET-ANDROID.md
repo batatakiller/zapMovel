@@ -176,3 +176,25 @@ bolha otimista: o horário que gravamos não é o horário em que o WhatsApp de 
 enviou. Por isso, quando a chave exata não casa, a ingestão procura a linha
 provisória por `(remote_jid, from_me, conteúdo)` dentro de uma janela de 3
 minutos.
+
+## Produção
+
+App em `https://zapmovel.vercel.app`; `ANDROID_INGEST_TOKEN` nas variáveis de
+ambiente da Vercel (Production). O agente aponta para lá por padrão
+(`Config.URL_PADRAO`), então não depende mais de cabo nem de `adb reverse`.
+
+**Keep-alive precisa ficar desligado.** O `HttpURLConnection` do Android
+reaproveita conexões do pool, mas a Vercel as fecha antes — o cliente escreve
+num socket morto e falha com `unexpected end of stream`. Ambas as classes de
+rede mandam `Connection: close`. Custa um handshake por requisição.
+
+### O ReplyRegistry vive em memória
+
+As ações de resposta são guardadas em RAM, porque um `PendingIntent` não é
+serializável. Toda vez que o serviço reinicia — app atualizado, MIUI matando o
+processo, tablet reiniciado — elas se perdem, e só voltam conforme cada conversa
+notificar de novo. Envios enfileirados nesse intervalo falham com *"sem
+notificação ativa desta conversa"* e esgotam em 5 tentativas.
+
+No uso normal isso quase não aparece (responder quem acabou de escrever usa uma
+notificação fresca), mas é a explicação para falhas que pareceriam aleatórias.

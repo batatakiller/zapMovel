@@ -15,7 +15,7 @@ public class Config {
 
     // URL e conta não são segredo e mudam pouco, então já vêm preenchidas: o
     // usuário só precisa colar o token, que é a única parte sensível.
-    public static final String URL_PADRAO = "http://localhost:3000";
+    public static final String URL_PADRAO = "https://zapmovel.vercel.app";
     public static final String CONTA_PADRAO = "tablet-loja";
 
     public String url() { return p.getString("url", URL_PADRAO); }

@@ -45,6 +45,11 @@ public class Sender {
             conn.setRequestMethod("POST");
             conn.setRequestProperty("Content-Type", "application/json");
             conn.setRequestProperty("Authorization", "Bearer " + cfg.token());
+            // O HttpURLConnection do Android reaproveita conexões do pool, mas a
+            // Vercel as fecha antes — o cliente então tenta escrever num socket
+            // morto e falha com "unexpected end of stream". Fechar a cada
+            // requisição custa um handshake e evita o erro.
+            conn.setRequestProperty("Connection", "close");
             conn.setConnectTimeout(15000);
             conn.setReadTimeout(30000);
             conn.setDoOutput(true);
