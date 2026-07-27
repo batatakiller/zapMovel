@@ -132,14 +132,17 @@ export default function ChatPage({ params }: { params: Promise<{ instance: strin
   }
 
   const load = useCallback(async () => {
+    // Precisa ordenar do mais NOVO para o mais velho e só então inverter: com
+    // `ascending` o limite pega as 1000 mensagens mais ANTIGAS da conversa, e
+    // quem tem histórico maior que isso nunca vê o que acabou de chegar.
     const { data } = await supabaseBrowser()
       .from("zap_messages")
       .select("id,instance,remote_jid,message_id,from_me,push_name,type,content,status,msg_timestamp,quoted_message_id")
       .eq("instance", instance)
       .eq("remote_jid", jid)
-      .order("msg_timestamp", { ascending: true })
+      .order("msg_timestamp", { ascending: false })
       .limit(1000);
-    if (data) setMessages(data as ZapMessage[]);
+    if (data) setMessages((data as ZapMessage[]).slice().reverse());
   }, [instance, jid]);
 
   useEffect(() => {
