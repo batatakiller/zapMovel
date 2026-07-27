@@ -191,7 +191,31 @@ async function ingestNotif(
   );
   const jaExiste = new Map(existentes.map((r) => [r.dedupe_key, r]));
 
-  const novas = messages.filter((m) => !jaExiste.has(m.dedupe_key));
+  // Rede de segurança contra o eco: depois de responder pelo ZapMóvel, o
+  // WhatsApp reescreve a notificação incluindo a mensagem que VOCÊ mandou, e
+  // ela chega aqui marcada como recebida — a conversa mostrava tudo duas vezes.
+  // O agente já filtra isso, mas quem depende de uma versão antiga do app não
+  // deve poluir o histórico.
+  const recebidas = messages.filter((m) => !m.from_me);
+  const ecos = new Set<string>();
+  if (recebidas.length) {
+    const JANELA = 10 * 60_000;
+    const instantes = recebidas.map((m) => m.msg_timestamp);
+    const { data: enviadas } = await db
+      .from("zap_messages")
+      .select("remote_jid,content")
+      .eq("instance", instance)
+      .eq("from_me", true)
+      .gte("msg_timestamp", new Date(Math.min(...instantes) - JANELA).toISOString())
+      .lte("msg_timestamp", new Date(Math.max(...instantes) + JANELA).toISOString());
+
+    const minhas = new Set((enviadas ?? []).map((r) => `${r.remote_jid}|${(r.content ?? "").trim()}`));
+    for (const m of recebidas) {
+      if (minhas.has(`${m.remote_jid}|${(m.content ?? "").trim()}`)) ecos.add(m.dedupe_key);
+    }
+  }
+
+  const novas = messages.filter((m) => !jaExiste.has(m.dedupe_key) && !ecos.has(m.dedupe_key));
   if (novas.length) {
     const { error } = await db
       .from("zap_messages")

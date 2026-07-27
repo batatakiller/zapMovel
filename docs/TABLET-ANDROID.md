@@ -258,3 +258,42 @@ em apenas 1.285 arquivos, então um único arquivo grande consome cota à toa.
   `nl:<hash>` caía em "id inválido" mesmo com o arquivo no bucket.
 - **Arquivo órfão**: a rota exige que a mensagem exista antes de gravar, senão
   devolve 404 e descarta.
+
+## O eco da própria mensagem
+
+Depois de responder pelo ZapMóvel, o WhatsApp **reescreve a notificação da
+conversa incluindo a sua resposta**. O listener lia essa notificação e gravava a
+mensagem outra vez, agora como recebida — a conversa mostrava tudo duas vezes,
+uma bolha de cada lado.
+
+Corrigido em duas camadas:
+
+- **No agente:** o `MessagingStyle` só marca remetente para o outro lado — a sua
+  mensagem vem sem `sender` e sem `sender_person`. É esse o sinal usado.
+- **No servidor:** mensagem recebida cujo texto e conversa batem com uma enviada
+  nos últimos 10 minutos é descartada, caso o aparelho fique numa versão antiga.
+
+Ao limpar os ecos já gravados, vale lembrar do **limite implícito de 1000 linhas**
+do PostgREST: uma varredura sem filtro de tempo não encontra as linhas recentes
+e dá a falsa impressão de que não há nada a corrigir.
+
+## Ciclo automático no tablet (Termux)
+
+`scripts/android/termux/` roda o msgstore sem PC:
+
+```
+setup.sh   instala python, copia os scripts, pede o token (digitação oculta)
+loop.sh    a cada 30 min, processa o backup do MIUI se houver um NOVO
+```
+
+O `/sdcard` é a ponte: a casa do Termux é privada e não se enxerga de fora, mas
+os dois lados leem `/sdcard/zapmovel/`.
+
+Para fechar a autonomia, o **backup automático do MIUI** precisa estar ligado:
+Configurações adicionais do backup → "Fazer backup automaticamente" → Dias
+(vem como "Nunca"; o horário já é 02:30). Confirme que "Itens para o backup"
+inclui o WhatsApp Business. Com isso o MIUI gera o backup de madrugada e o loop
+o processa sozinho.
+
+`termux-wake-lock` é essencial: sem ele o Android suspende o processo quando a
+tela apaga e o ciclo para em silêncio.

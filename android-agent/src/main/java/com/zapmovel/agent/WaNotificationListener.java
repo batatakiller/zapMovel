@@ -146,6 +146,18 @@ public class WaNotificationListener extends NotificationListenerService {
                 String texto = texto(b.getCharSequence("text"));
                 if (texto.isEmpty() && uri == null) continue;
                 long ts = b.getLong("time", quando);
+
+                // O MessagingStyle marca como remetente APENAS o outro lado:
+                // mensagem sua entra sem "sender" e sem "sender_person". Depois
+                // de responder pelo ZapMóvel, o WhatsApp reescreve a notificação
+                // incluindo a sua resposta — sem esta checagem ela voltava para
+                // o banco como recebida e a conversa mostrava tudo duas vezes.
+                boolean minha = !b.containsKey("sender_person") && !b.containsKey("sender");
+                if (minha) {
+                    Log.d(Sender.TAG, "ignorando eco da minha propria mensagem");
+                    continue;
+                }
+
                 String remetente = texto(b.getCharSequence("sender"));
                 String nome = grupo ? titulo : (remetente.isEmpty() ? titulo : remetente);
 
