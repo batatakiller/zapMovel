@@ -19,9 +19,10 @@ export function useAccounts() {
     async function load() {
       const { data } = await supabaseBrowser()
         .from("zap_accounts")
-        .select("instance,label,color,phone,kind,sort_order")
+        .select("instance,label,color,phone,kind,transport,enabled,is_default,sort_order")
         .order("sort_order", { ascending: true });
-      if (alive && data) setAccounts(data as Account[]);
+      // conta desativada some do painel; as mensagens dela continuam no banco
+      if (alive && data) setAccounts((data as Account[]).filter((a) => a.enabled !== false));
       if (alive) setLoaded(true);
     }
     load();
@@ -36,5 +37,6 @@ export function useAccounts() {
   }, [instanceId]);
 
   const byInstance = new Map(accounts.map((a) => [a.instance, a]));
-  return { accounts, byInstance, loaded };
+  const padrao = accounts.find((a) => a.is_default)?.instance ?? null;
+  return { accounts, byInstance, loaded, padrao };
 }

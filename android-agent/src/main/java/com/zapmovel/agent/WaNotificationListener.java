@@ -167,7 +167,10 @@ public class WaNotificationListener extends NotificationListenerService {
                     // próprio rótulo ("📷 Foto") quando não existe. Concatenar
                     // gerava "📷 Foto — 📷 Foto"; usar o texto como veio resolve.
                     String conteudo = texto.isEmpty() ? r[1] : texto;
-                    String msgId = adicionar(lote, jid, nome, conteudo, ts, grupo, r[0], texto);
+                    // texto VAZIO na chave: o msgstore deixa text_data nulo em
+                    // quase toda mídia, e usar o rótulo aqui faria a mesma foto
+                    // entrar duas vezes — uma por camada.
+                    String msgId = adicionar(lote, jid, nome, conteudo, ts, grupo, r[0], "");
                     if (msgId != null && midiaEnviada.put(msgId, Boolean.TRUE) == null) {
                         pendentes.add(new Object[]{msgId, uri, mime});
                     }

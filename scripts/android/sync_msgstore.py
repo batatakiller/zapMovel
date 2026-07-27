@@ -283,7 +283,11 @@ def to_payload(row, instance):
         "status": (STATUS_MAP.get(row["status"], "sent") if from_me else "received"),
         "msg_timestamp": ts_ms,
         "quoted_message_id": row["quoted_key_id"],
-        "dedupe_key": dedupe_key(jid, ts_ms, from_me, row["text_data"]),
+        # Mídia usa texto VAZIO na chave, nos dois lados. O msgstore deixa
+        # text_data nulo em 98% das imagens, enquanto a notificação manda o
+        # rótulo ("📷 Foto") — sem esta regra as chaves nunca coincidem e cada
+        # foto entra duas vezes na conversa.
+        "dedupe_key": dedupe_key(jid, ts_ms, from_me, "" if kind != "text" else row["text_data"]),
         "origin": "msgstore",
         # caminho relativo do arquivo no armazenamento compartilhado — quem sobe
         # a mídia é o passo seguinte, aqui só registramos onde ela está

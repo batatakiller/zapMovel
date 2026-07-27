@@ -297,3 +297,42 @@ o processa sozinho.
 
 `termux-wake-lock` é essencial: sem ele o Android suspende o processo quando a
 tela apaga e o ciclo para em silêncio.
+
+## Upload de mídia pelo msgstore
+
+A notificação só traz a mídia do que chegou com o agente rodando. Mensagem que
+chegou com a conversa aberta no tablet, ou com o serviço parado, fica com a
+bolha "📷 Foto" e nenhum arquivo.
+
+`scripts/android/upload_media.py` fecha esse buraco pelo outro lado: o msgstore
+grava em `raw.media_path` onde o arquivo está, e o script lê de `/sdcard` e
+envia para a mesma rota que a notificação usa.
+
+```bash
+python upload_media.py              # pendências dos últimos 7 dias
+python upload_media.py --dias 30    # janela maior (assim se sobe histórico)
+python upload_media.py --tipos image,document,video
+```
+
+Vídeo fica de fora por padrão: no histórico deste aparelho foram 6,67 GB em
+apenas 1.285 arquivos, e o Storage do plano gratuito tem 1 GB.
+
+Roda em lotes de 200 (`--limite`), então repetir o comando cobre o resto.
+Primeira execução: 236 arquivos enviados, nenhuma falha, nenhum arquivo ausente
+no aparelho. Cobertura passou de 3 para **246 de 278 (88%)** nos últimos 7 dias.
+
+O que sobra são mensagens que só a notificação viu e que ainda não passaram por
+um backup — elas ganham `media_path` no ciclo das 02:00.
+
+## Contas: ocultar e conta padrão
+
+`enabled=false` tira a conta do painel sem apagar nada; `is_default` faz o painel
+abrir já filtrado nela (índice único garante no máximo uma). Ocultar a conta
+padrão limpa o padrão automaticamente — senão o painel abriria num filtro
+invisível e a lista pareceria vazia sem explicação.
+
+## Push das mensagens do tablet
+
+O push é disparado **só na camada da notificação**, que é a que chega em
+segundos. O msgstore vem horas depois com mensagem que você já viu; notificar de
+novo seria repetir aviso velho.

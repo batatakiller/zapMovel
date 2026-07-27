@@ -29,6 +29,9 @@ export type Account = {
   color: string;
   phone: string | null;
   kind: "live" | "archive";
+  transport?: "evolution" | "android";
+  enabled?: boolean;
+  is_default?: boolean;
   sort_order: number;
   hasCustomEvolution?: boolean;
 };

@@ -1,4 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { sendPushToAll } from "./push";
+import { jidToLabel } from "./normalize";
 
 // Uma mensagem vinda do aparelho. Duas origens a produzem:
 //   'msgstore' — scripts/android/sync_msgstore.py, a fonte de verdade
@@ -143,12 +145,30 @@ export async function normalizeAndroidBatch(
   // Atualizar no lugar (em vez de apagar e reinserir) mantém a linha estável
   // para o Realtime — a bolha na conversa é corrigida sem sumir e voltar.
   if (toReconcile.length) {
+    // A linha provisória pode já ter o arquivo no bucket (a notificação sobe a
+    // mídia na hora). O raw do msgstore não conhece esse campo, então
+    // sobrescrevê-lo cegamente apagaria a referência e a foto sumiria da
+    // conversa. Por isso o raw anterior é preservado por baixo do novo.
+    const ids = toReconcile.map((r) => r.id);
+    const anteriores = new Map<number, Record<string, unknown>>();
+    for (let i = 0; i < ids.length; i += IN_CHUNK) {
+      const { data } = await db
+        .from("zap_messages")
+        .select("id,raw")
+        .in("id", ids.slice(i, i + IN_CHUNK));
+      for (const r of data ?? []) anteriores.set(r.id, (r.raw as Record<string, unknown>) ?? {});
+    }
+
     const CONCURRENCY = 8;
     for (let i = 0; i < toReconcile.length; i += CONCURRENCY) {
       const results = await Promise.all(
-        toReconcile.slice(i, i + CONCURRENCY).map(({ id, row }) =>
-          db.from("zap_messages").update(row).eq("id", id)
-        )
+        toReconcile.slice(i, i + CONCURRENCY).map(({ id, row }) => {
+          const antigo = anteriores.get(id) ?? {};
+          const mesclado = { ...antigo, ...((row.raw as object) ?? {}) };
+          // media_stored só existe no antigo; não deixar o novo apagá-lo
+          if (antigo.media_stored) mesclado.media_stored = antigo.media_stored;
+          return db.from("zap_messages").update({ ...row, raw: mesclado }).eq("id", id);
+        })
       );
       const failed = results.find((r) => r.error);
       if (failed?.error) throw new Error(`reconciliação: ${failed.error.message}`);
@@ -239,6 +259,22 @@ async function ingestNotif(
       .eq("id", anterior.id);
     if (error) throw new Error(`promover mídia: ${error.message}`);
   }
+
+  // Avisa os aparelhos. Só aqui, no caminho da notificação: é a camada que
+  // chega em segundos. O msgstore vem depois, com mensagem que você já viu —
+  // notificar de novo seria repetir um aviso velho.
+  await Promise.all(
+    novas
+      .filter((m) => !m.from_me)
+      .map((m) =>
+        sendPushToAll({
+          title: m.push_name || jidToLabel(m.remote_jid),
+          body: m.content ?? "Nova mensagem",
+          jid: m.remote_jid,
+          instance: m.instance,
+        }).catch((e) => console.error("push:", e?.message))
+      )
+  );
 
   const jids = await upsertJidMap(db, instance, messages);
   return {

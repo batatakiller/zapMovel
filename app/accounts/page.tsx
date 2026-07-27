@@ -265,6 +265,27 @@ export default function AccountsPage() {
     }
   }
 
+  // Alterna visibilidade / conta padrão. Ambos são um PATCH simples; o
+  // servidor cuida de desmarcar a padrão anterior e de não deixar uma conta
+  // escondida ser a padrão.
+  async function patchConta(instance: string, corpo: Record<string, unknown>) {
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/accounts/${encodeURIComponent(instance)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(corpo),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error);
+      await loadAccounts();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function handleResetEvolution() {
     if (!editing) return;
     setSaving(true);
@@ -311,16 +332,46 @@ export default function AccountsPage() {
             </li>
           )}
           {accounts.map((a) => (
-            <li key={a.instance} className="flex items-center gap-3 px-4 py-3">
+            <li
+              key={a.instance}
+              className="flex items-center gap-3 px-4 py-3"
+              style={{ opacity: a.enabled === false ? 0.45 : 1 }}
+            >
               <span className="h-10 w-10 shrink-0 rounded-full" style={{ background: a.color }} />
               <div className="min-w-0 flex-1">
-                <p className="truncate font-medium">{a.label}</p>
+                <p className="truncate font-medium">
+                  {a.label}
+                  {a.is_default && <span title="Conta padrão do painel"> ⭐</span>}
+                </p>
                 <p className="truncate text-sm" style={{ color: "var(--wa-text-muted)" }}>
+                  {a.enabled === false ? "oculta do painel · " : ""}
                   {a.phone ? `${a.phone} · ` : ""}
                   {a.kind === "live" ? "conectada (ao vivo)" : "arquivo importado (só leitura)"}
                   {a.hasCustomEvolution ? " · servidor próprio" : ""}
                 </p>
               </div>
+              {a.enabled !== false && (
+                <button
+                  onClick={() => patchConta(a.instance, { isDefault: !a.is_default })}
+                  disabled={saving}
+                  className="shrink-0 rounded-full px-2.5 py-1.5 text-sm"
+                  style={{ background: "var(--wa-bg)", color: a.is_default ? "var(--wa-accent)" : "var(--wa-text-muted)" }}
+                  title={a.is_default ? "Deixar de ser a conta padrão" : "Abrir o painel nesta conta"}
+                  aria-label="Conta padrão"
+                >
+                  {a.is_default ? "★" : "☆"}
+                </button>
+              )}
+              <button
+                onClick={() => patchConta(a.instance, { enabled: a.enabled === false })}
+                disabled={saving}
+                className="shrink-0 rounded-full px-2.5 py-1.5 text-sm"
+                style={{ background: "var(--wa-bg)", color: "var(--wa-text-muted)" }}
+                title={a.enabled === false ? "Mostrar no painel" : "Ocultar do painel (não apaga nada)"}
+                aria-label="Mostrar ou ocultar conta"
+              >
+                {a.enabled === false ? "🙈" : "👁"}
+              </button>
               <button
                 onClick={() => openEdit(a)}
                 className="shrink-0 rounded-full px-2.5 py-1.5 text-sm"

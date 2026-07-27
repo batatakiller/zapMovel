@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 import { useSession } from "@/hooks/useSession";
@@ -70,12 +70,20 @@ type SearchResults = { chats: Chat[]; hits: ZapMessage[] };
 // casos é a mesma instância montada uma única vez (sem consultas duplicadas).
 export default function ChatList() {
   const ready = useSession();
-  const { accounts, byInstance } = useAccounts();
+  const { accounts, byInstance, loaded: contasCarregadas, padrao } = useAccounts();
   const [messages, setMessages] = useState<ZapMessage[]>([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResults | null>(null);
   const [filter, setFilter] = useState<string>("all"); // 'all' ou uma instance
+  // A conta padrão só pode ser aplicada depois que as contas carregam, e uma
+  // única vez: reaplicar a cada atualização impediria você de trocar de filtro.
+  const padraoAplicado = useRef(false);
+  useEffect(() => {
+    if (!contasCarregadas || padraoAplicado.current) return;
+    padraoAplicado.current = true;
+    if (padrao) setFilter(padrao);
+  }, [contasCarregadas, padrao]);
   const push = usePush();
 
   const load = useCallback(async () => {
@@ -131,10 +139,13 @@ export default function ChatList() {
     return () => clearTimeout(t);
   }, [query, filter]);
 
-  const visibleMessages = useMemo(
-    () => (filter === "all" ? messages : messages.filter((m) => m.instance === filter)),
-    [messages, filter]
-  );
+  const visibleMessages = useMemo(() => {
+    // conta desativada não aparece nem no "Todas" — o hook já a removeu da
+    // lista, então basta manter apenas mensagens de contas ainda visíveis
+    const visiveis = new Set(accounts.map((a) => a.instance));
+    const doPainel = messages.filter((m) => visiveis.has(m.instance));
+    return filter === "all" ? doPainel : doPainel.filter((m) => m.instance === filter);
+  }, [messages, filter, accounts]);
   const chats = useMemo(() => buildChats(visibleMessages), [visibleMessages]);
   const multiAccount = accounts.length > 1;
 

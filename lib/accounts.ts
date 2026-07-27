@@ -7,6 +7,8 @@ export type Account = {
   phone: string | null;
   kind: "live" | "archive";
   transport: "evolution" | "android";
+  enabled: boolean;
+  is_default: boolean;
   sort_order: number;
   hasCustomEvolution: boolean;
 };
@@ -28,7 +30,7 @@ export async function listAccounts(): Promise<Account[]> {
   const db = supabaseAdmin();
   const { data, error } = await db
     .from("zap_accounts")
-    .select("instance,label,color,phone,kind,transport,sort_order")
+    .select("instance,label,color,phone,kind,transport,enabled,is_default,sort_order")
     .order("sort_order", { ascending: true })
     .order("label", { ascending: true });
   if (error || !data?.length) {
@@ -40,6 +42,8 @@ export async function listAccounts(): Promise<Account[]> {
         phone: null,
         kind: "live",
         transport: "evolution",
+        enabled: true,
+        is_default: false,
         sort_order: 0,
         hasCustomEvolution: false,
       },
