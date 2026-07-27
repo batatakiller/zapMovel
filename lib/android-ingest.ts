@@ -182,14 +182,14 @@ async function ingestNotif(
 ): Promise<IngestResult> {
   const dedupeKeys = [...new Set(messages.map((m) => m.dedupe_key).filter(Boolean))];
 
-  const existentes = await selectIn<{ dedupe_key: string | null }>(
+  const existentes = await selectIn<{ id: number; dedupe_key: string | null; type: string }>(
     db,
     "dedupe_key",
     dedupeKeys,
-    (q) => q.select("dedupe_key").eq("instance", instance),
+    (q) => q.select("id,dedupe_key,type").eq("instance", instance),
     "consulta de dedupe"
   );
-  const jaExiste = new Set(existentes.map((r) => r.dedupe_key));
+  const jaExiste = new Map(existentes.map((r) => [r.dedupe_key, r]));
 
   const novas = messages.filter((m) => !jaExiste.has(m.dedupe_key));
   if (novas.length) {
@@ -197,6 +197,23 @@ async function ingestNotif(
       .from("zap_messages")
       .upsert(novas.map(toRow), { onConflict: "instance,message_id", ignoreDuplicates: true });
     if (error) throw new Error(`insert notif: ${error.message}`);
+  }
+
+  // A notificação de uma foto chega duas vezes: primeiro sem a mídia (ainda
+  // baixando) e depois com ela. Como as duas têm a mesma dedupe_key, a segunda
+  // seria descartada e a imagem se perderia — a mensagem ficaria como texto
+  // para sempre. Aqui promovemos a linha ao tipo certo quando a mídia aparece.
+  const promover = messages.filter((m) => {
+    const anterior = jaExiste.get(m.dedupe_key);
+    return anterior && anterior.type === "text" && m.type !== "text";
+  });
+  for (const m of promover) {
+    const anterior = jaExiste.get(m.dedupe_key)!;
+    const { error } = await db
+      .from("zap_messages")
+      .update({ type: m.type, content: m.content })
+      .eq("id", anterior.id);
+    if (error) throw new Error(`promover mídia: ${error.message}`);
   }
 
   const jids = await upsertJidMap(db, instance, messages);

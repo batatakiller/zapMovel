@@ -18,7 +18,10 @@ function bucketUrl(name: string) {
 export async function GET(req: NextRequest) {
   const id = req.nextUrl.searchParams.get("id");
   const acc = req.nextUrl.searchParams.get("a");
-  if (!id || !/^[A-Za-z0-9_-]+$/.test(id)) {
+  // O ':' é necessário: as mensagens capturadas pela notificação usam id
+  // sintético no formato 'nl:<hash>', e sem ele a foto do tablet nunca é
+  // servida. Continua restrito o bastante para não montar caminho arbitrário.
+  if (!id || !/^[A-Za-z0-9_:-]+$/.test(id)) {
     return NextResponse.json({ error: "id inválido" }, { status: 400 });
   }
 

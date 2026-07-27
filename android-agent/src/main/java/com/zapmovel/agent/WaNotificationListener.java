@@ -50,7 +50,16 @@ public class WaNotificationListener extends NotificationListenerService {
             }
         });
 
+    /** Evita subir o mesmo arquivo a cada atualização da notificação. */
+    private final Map<String, Boolean> midiaEnviada =
+        Collections.synchronizedMap(new LinkedHashMap<String, Boolean>(200, 0.75f, true) {
+            @Override protected boolean removeEldestEntry(Map.Entry<String, Boolean> e) {
+                return size() > 150;
+            }
+        });
+
     private OutboxPoller poller;
+    private MediaUploader uploader;
     private java.util.concurrent.ScheduledExecutorService agenda;
 
     @Override public void onCreate() {
@@ -58,6 +67,7 @@ public class WaNotificationListener extends NotificationListenerService {
         cfg = new Config(this);
         sender = new Sender(cfg);
         poller = new OutboxPoller(this, cfg);
+        uploader = new MediaUploader(this, cfg);
 
         // O ciclo da fila vive junto com o listener: os dois dependem das mesmas
         // notificações, e um serviço só é mais simples de manter vivo na MIUI do
@@ -121,34 +131,65 @@ public class WaNotificationListener extends NotificationListenerService {
     private void processar(String jid, String titulo, boolean grupo,
                            Parcelable[] msgs, Bundle extras, long quando) {
         List<String> lote = new ArrayList<>();
+        List<Object[]> pendentes = new ArrayList<>();
 
         if (msgs != null && msgs.length > 0) {
             for (Parcelable p : msgs) {
                 if (!(p instanceof Bundle)) continue;
                 Bundle b = (Bundle) p;
+                // O MessagingStyle traz a mídia em "uri" + "type" — é a própria
+                // notificação dizendo qual arquivo é o da mensagem, sem precisar
+                // vasculhar /sdcard e adivinhar pelo horário.
+                String mime = b.getString("type");
+                android.net.Uri uri = b.getParcelable("uri");
+
                 String texto = texto(b.getCharSequence("text"));
-                if (texto.isEmpty()) continue;
+                if (texto.isEmpty() && uri == null) continue;
                 long ts = b.getLong("time", quando);
-                // Em grupo, 'sender' é quem falou; em conversa individual vem
-                // nulo e o nome da conversa é o próprio título.
                 String remetente = texto(b.getCharSequence("sender"));
                 String nome = grupo ? titulo : (remetente.isEmpty() ? titulo : remetente);
-                adicionar(lote, jid, nome, texto, ts, grupo);
+
+                if (uri != null && mime != null) {
+                    String[] r = rotulo(mime);
+                    // O WhatsApp já põe em `text` a legenda quando existe, ou o
+                    // próprio rótulo ("📷 Foto") quando não existe. Concatenar
+                    // gerava "📷 Foto — 📷 Foto"; usar o texto como veio resolve.
+                    String conteudo = texto.isEmpty() ? r[1] : texto;
+                    String msgId = adicionar(lote, jid, nome, conteudo, ts, grupo, r[0], texto);
+                    if (msgId != null && midiaEnviada.put(msgId, Boolean.TRUE) == null) {
+                        pendentes.add(new Object[]{msgId, uri, mime});
+                    }
+                } else {
+                    adicionar(lote, jid, nome, texto, ts, grupo, "text", texto);
+                }
             }
         } else {
             // Notificação sem MessagingStyle: sobra o texto simples.
             String texto = texto(extras.getCharSequence(Notification.EXTRA_TEXT));
-            if (!texto.isEmpty()) adicionar(lote, jid, titulo, texto, quando, grupo);
+            if (!texto.isEmpty()) adicionar(lote, jid, titulo, texto, quando, grupo, "text", texto);
         }
 
         Log.i(Sender.TAG, "conversa " + jid + " -> " + lote.size() + " mensagem(ns) nova(s)");
-        if (!lote.isEmpty()) sender.send(lote);
+        if (!lote.isEmpty() && !sender.send(lote)) return;
+
+        // Só depois da mensagem existir no banco: o upload precisa de uma linha
+        // para marcar, senão o arquivo fica órfão no bucket.
+        for (Object[] p : pendentes) {
+            uploader.enviar((String) p[0], (android.net.Uri) p[1], (String) p[2]);
+        }
     }
 
-    private void adicionar(List<String> lote, String jid, String nome,
-                           String texto, long ts, boolean grupo) {
-        String chave = dedupeKey(jid, ts, false, texto);
-        if (jaEnviadas.put(chave, Boolean.TRUE) != null) return; // já foi
+    private String adicionar(List<String> lote, String jid, String nome,
+                             String conteudo, long ts, boolean grupo,
+                             String tipo, String textoParaChave) {
+        // A chave usa o texto puro (legenda, ou vazio), não o rótulo com emoji:
+        // é assim que o msgstore a calcula, e as duas precisam coincidir.
+        String chave = dedupeKey(jid, ts, false, textoParaChave);
+        String msgId = "nl:" + chave.substring(0, 16);
+        // Devolve o id mesmo quando a mensagem já foi enviada: a notificação de
+        // uma foto chega duas vezes — primeiro sem a mídia, depois com ela — e
+        // é na segunda que temos o arquivo. Sair aqui perderia a imagem.
+        if (jaEnviadas.put(chave, Boolean.TRUE) != null) return msgId;
 
         StringBuilder j = new StringBuilder();
         j.append('{')
@@ -158,8 +199,8 @@ public class WaNotificationListener extends NotificationListenerService {
          .append(campo("message_id", "nl:" + chave.substring(0, 16))).append(',')
          .append("\"from_me\":false,")
          .append(campo("push_name", nome)).append(',')
-         .append(campo("type", "text")).append(',')
-         .append(campo("content", texto)).append(',')
+         .append(campo("type", tipo)).append(',')
+         .append(campo("content", conteudo)).append(',')
          .append(campo("status", "received")).append(',')
          .append("\"msg_timestamp\":").append(ts).append(',')
          .append("\"quoted_message_id\":null,")
@@ -169,6 +210,16 @@ public class WaNotificationListener extends NotificationListenerService {
          .append("\"is_group\":").append(grupo)
          .append('}');
         lote.add(j.toString());
+        return msgId;
+    }
+
+    /** message_type do WhatsApp não vem na notificação; deduzimos pelo mime. */
+    private static String[] rotulo(String mime) {
+        if (mime.startsWith("image/webp")) return new String[]{"sticker", "💟 Figurinha"};
+        if (mime.startsWith("image/"))     return new String[]{"image", "📷 Foto"};
+        if (mime.startsWith("video/"))     return new String[]{"video", "🎬 Vídeo"};
+        if (mime.startsWith("audio/"))     return new String[]{"audio", "🎤 Áudio"};
+        return new String[]{"document", "📄 Documento"};
     }
 
     /**

@@ -225,3 +225,36 @@ Rode de tempos em tempos.
 
 Resultado na primeira execução: 56 conversas recuperadas (46 com telefone, 10
 com nome), levando a lista de 3 para 46 conversas identificadas de 65.
+
+## Recebimento de mídia
+
+A notificação do WhatsApp entrega a mídia direto: o MessagingStyle traz
+`uri` + `type` (verificado: `type=image/jpeg uri=true`). Isso dispensa vasculhar
+`/sdcard` e adivinhar por horário qual arquivo pertence a qual mensagem — algo
+que seria frágil e que chegamos a planejar antes de medir.
+
+```
+notificação (uri + type)
+   -> mensagem vira type=image/video/... em vez de texto
+   -> POST /api/ingest/media (binário puro, não base64)
+   -> bucket chat_media como <message_id>.<ext>
+   -> /api/media serve para o app
+```
+
+Limite de 12 MB por arquivo: no histórico deste aparelho, vídeo foram 6,67 GB
+em apenas 1.285 arquivos, então um único arquivo grande consome cota à toa.
+
+### Detalhes que só apareceram testando
+
+- **A foto notifica duas vezes**: primeiro sem a mídia (ainda baixando), depois
+  com ela. A deduplicação descartava a segunda e a imagem se perdia — a
+  mensagem ficava como texto para sempre. O agente não descarta mais antes de
+  subir o arquivo, e a ingestão promove a linha de `text` para `image`.
+- **O texto da notificação já é o rótulo** ("📷 Foto") quando não há legenda.
+  Concatenar com o nosso rótulo gerava "📷 Foto — 📷 Foto".
+- **A dedupe_key de mídia usa a legenda pura**, não o rótulo com emoji — é
+  assim que o msgstore calcula, e as duas precisam coincidir.
+- **`/api/media` rejeitava o id sintético**: a validação não permitia `:`, e
+  `nl:<hash>` caía em "id inválido" mesmo com o arquivo no bucket.
+- **Arquivo órfão**: a rota exige que a mensagem exista antes de gravar, senão
+  devolve 404 e descarta.
