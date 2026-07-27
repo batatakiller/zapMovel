@@ -55,8 +55,8 @@ privacidade do WhatsApp, não uma falha da extração. Consequências:
 - ✅ iniciar conversa com número que você já tem: `wa.me/<numero>` funciona normal
 - ⚠️ discar a partir de uma conversa LID antiga: não há número para usar
 
-`zap_jid_map` acumula o que se descobre por outras vias (o número aparece em
-`android.textLines` para contatos não salvos, e na tela do chat).
+`zap_jid_map` acumula o que se descobre por outras vias — ver "Atalhos do
+Android" logo abaixo, que é a melhor delas.
 
 ## Configuração no tablet
 
@@ -198,3 +198,30 @@ notificação ativa desta conversa"* e esgotam em 5 tentativas.
 
 No uso normal isso quase não aparece (responder quem acabou de escrever usa uma
 notificação fresca), mas é a explicação para falhas que pareceriam aleatórias.
+
+## Atalhos do Android: onde o vínculo LID↔telefone sobreviveu
+
+O banco do WhatsApp não guarda o telefone das conversas LID (medido: 8 de 2.587
+cobertas pela agenda). Mas o **ShortcutManager do Android** mantém um atalho por
+conversa, e nele:
+
+```
+ShortcutInfo {id=96344739999989@lid, ...
+  shortLabel=+55 81 8593-7934
+```
+
+O `id` é o LID e o `shortLabel` é o nome do contato — ou **o telefone**, quando
+não está salvo na agenda (justamente o caso das conversas LID). É a única fonte
+encontrada que devolve o número.
+
+`scripts/android/import_shortcuts.py` lê isso via `adb shell dumpsys shortcut`,
+grava em `zap_jid_map` e preenche `push_name` onde estiver vazio (sem
+sobrescrever nome vindo da notificação, que é melhor).
+
+**Limites:** o Android guarda algumas dezenas de atalhos, sempre das conversas
+mais recentes — não recupera histórico antigo. E exige o tablet no cabo, porque
+ler atalhos de outro app precisa de permissão de launcher, que o agente não tem.
+Rode de tempos em tempos.
+
+Resultado na primeira execução: 56 conversas recuperadas (46 com telefone, 10
+com nome), levando a lista de 3 para 46 conversas identificadas de 65.
