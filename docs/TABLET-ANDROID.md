@@ -92,3 +92,53 @@ ciclo seguinte retoma do mesmo ponto.
 - Consumo do `zap_outbox` pelo aparelho (a tabela e a reserva atômica já existem)
 - Disparo automático do backup do MIUI (a activity é exportada:
   `miui.intent.backup.LOCAL_HOME_ACTIVITY`, mas pede a senha do aparelho)
+
+## Camada 1 — o app companion (android-agent/)
+
+App próprio em Java, compilado sem gradle nem Android Studio
+([android-agent/build.sh](../android-agent/build.sh) encadeia aapt2 → javac →
+d8 → apksigner). Escrito em Java porque `kotlinc` não estava disponível e para
+um NotificationListener não há diferença prática.
+
+O que ele extrai da notificação, verificado no aparelho:
+
+```
+notificacao de com.whatsapp.w4b shortcutId=173027740393727@lid temMessages=true
+conversa 173027740393727@lid -> 3 mensagem(ns) nova(s)
+enviadas 3 mensagens
+```
+
+`shortcutId` é o mesmo `<n>@lid` que o msgstore usa, então as duas camadas
+falam do mesmo chat. E `android.title` traz o nome que o WhatsApp exibe — a
+**única** fonte de nome para conversa LID, já que a agenda do aparelho não a
+cobre.
+
+### A dedupe_key precisa ser idêntica nos dois lados
+
+Java e Python calculam `sha1("<jid>|<segundos>|<0|1>|<texto trim>")`. Se
+divergirem em um byte, a mesma mensagem entra duas vezes — uma por camada.
+Conferido com acentos, quebra de linha, espaços nas pontas e texto vazio.
+
+**Ainda não validado na prática:** se o timestamp da notificação e o do
+msgstore divergirem em 1 segundo, a chave muda e a reconciliação falha. Só dá
+para confirmar com um backup feito depois de mensagens capturadas pela
+notificação.
+
+### Armadilhas do aparelho (todas custaram tempo)
+
+- **MIUI não vincula o listener** depois de instalar/atualizar: fica
+  "autorizado" e não recebe nada. O botão *Reconectar o serviço* chama
+  `requestRebind()`, que resolve. Repetir a cada atualização do app.
+- **Cleartext HTTP bloqueado** por padrão no targetSdk moderno. O
+  `network_security_config.xml` libera só `localhost` (o teste por cabo);
+  produção continua exigindo TLS.
+- **Início automático da MIUI** precisa estar ligado, senão o serviço não sobe
+  depois de reiniciar.
+- **`uiautomator` mostra a dica do campo como se fosse o texto** — "vazio" e
+  "preenchido" parecem iguais no dump. Confira pelo comprimento do texto.
+
+### Configuração
+
+URL e conta já vêm preenchidas no app (`Config.URL_PADRAO` /
+`CONTA_PADRAO`); só o token precisa ser digitado. Para o teste por cabo:
+`adb reverse tcp:3000 tcp:3000` e URL `http://localhost:3000`.

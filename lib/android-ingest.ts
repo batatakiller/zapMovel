@@ -1,6 +1,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-// Uma mensagem como sai do scripts/android/sync_msgstore.py.
+// Uma mensagem vinda do aparelho. Duas origens a produzem:
+//   'msgstore' — scripts/android/sync_msgstore.py, a fonte de verdade
+//   'notif'    — o app companion lendo a notificação, rápido e provisório
 export type AndroidMessage = {
   instance: string;
   remote_jid: string;
@@ -13,7 +15,7 @@ export type AndroidMessage = {
   msg_timestamp: number; // epoch em milissegundos
   quoted_message_id: string | null;
   dedupe_key: string;
-  origin: "msgstore";
+  origin: "msgstore" | "notif";
   media_path: string | null;
   mime_type: string | null;
   sender_jid: string | null;
@@ -49,6 +51,14 @@ export async function normalizeAndroidBatch(
   const porId = new Map<string, AndroidMessage>();
   for (const m of messages) porId.set(m.message_id, m);
   messages = [...porId.values()];
+
+  // A notificação é provisória por natureza: ela chega em segundos, mas sem id
+  // real, sem mídia e sem citação. Se a mensagem já está no banco — não importa
+  // por qual origem — a versão de lá é igual ou melhor, e sobrescrevê-la seria
+  // uma regressão. Então o fluxo da notificação só INSERE o que falta.
+  if (messages[0].origin === "notif") {
+    return ingestNotif(db, instance, messages);
+  }
 
   const messageIds = [...new Set(messages.map((m) => m.message_id))];
   const dedupeKeys = [...new Set(messages.map((m) => m.dedupe_key).filter(Boolean))];
@@ -131,6 +141,43 @@ export async function normalizeAndroidBatch(
   };
 }
 
+// Grava o que a notificação viu, sem nunca pisar no que já existe. A chave é a
+// dedupe_key: se ela já aparece no banco, a mensagem já foi registrada (pela
+// própria notificação antes, ou pelo msgstore) e não há nada a fazer.
+async function ingestNotif(
+  db: SupabaseClient,
+  instance: string,
+  messages: AndroidMessage[]
+): Promise<IngestResult> {
+  const dedupeKeys = [...new Set(messages.map((m) => m.dedupe_key).filter(Boolean))];
+
+  const existentes = await selectIn<{ dedupe_key: string | null }>(
+    db,
+    "dedupe_key",
+    dedupeKeys,
+    (q) => q.select("dedupe_key").eq("instance", instance),
+    "consulta de dedupe"
+  );
+  const jaExiste = new Set(existentes.map((r) => r.dedupe_key));
+
+  const novas = messages.filter((m) => !jaExiste.has(m.dedupe_key));
+  if (novas.length) {
+    const { error } = await db
+      .from("zap_messages")
+      .upsert(novas.map(toRow), { onConflict: "instance,message_id", ignoreDuplicates: true });
+    if (error) throw new Error(`insert notif: ${error.message}`);
+  }
+
+  const jids = await upsertJidMap(db, instance, messages);
+  return {
+    received: messages.length,
+    inserted: novas.length,
+    updated: 0,
+    reconciled: 0,
+    jids,
+  };
+}
+
 // O PostgREST serializa `.in()` na URL. Com um lote de 500 chaves de 40 chars a
 // URL passa de 20 KB e a requisição é recusada antes de chegar ao banco — o
 // sintoma é um "fetch failed" que não parece ter nada a ver com o tamanho.
@@ -182,7 +229,7 @@ function toRow(m: AndroidMessage) {
     status: m.status,
     msg_timestamp: new Date(m.msg_timestamp || Date.now()).toISOString(),
     quoted_message_id: m.quoted_message_id,
-    origin: "msgstore",
+    origin: m.origin,
     dedupe_key: m.dedupe_key,
     // media_path/mime_type ficam no raw: é o que o passo de upload de mídia usa
     // para achar o arquivo em /sdcard e mandar para o bucket chat_media
@@ -200,6 +247,7 @@ async function upsertJidMap(
   instance: string,
   messages: AndroidMessage[]
 ): Promise<number> {
+  const origem = messages[0].origin; // registra de onde o nome/telefone veio
   type Info = { display_name: string | null; phone: string | null };
   const byLid = new Map<string, Info>();
 
@@ -221,7 +269,7 @@ async function upsertJidMap(
     phone: v.phone,
     // o jid completo só faz sentido quando temos o número
     jid: v.phone ? `${onlyDigits(v.phone)}@s.whatsapp.net` : null,
-    source: "msgstore",
+    source: origem,
     updated_at: new Date().toISOString(),
   }));
 

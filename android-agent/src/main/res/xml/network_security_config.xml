@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  O Android bloqueia HTTP sem TLS por padrão, e com razão. Abrimos a exceção
+  apenas para localhost, que é o endereço usado no teste por cabo (adb reverse).
+  Em produção o app aponta para a URL https:// da Vercel, que continua exigindo
+  TLS como qualquer outro destino.
+-->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">localhost</domain>
+        <domain includeSubdomains="false">127.0.0.1</domain>
+    </domain-config>
+    <base-config cleartextTrafficPermitted="false" />
+</network-security-config>
