@@ -88,10 +88,12 @@ ciclo seguinte retoma do mesmo ponto.
 
 - Upload da mídia para o bucket `chat_media` (o caminho do arquivo já vem em
   `raw.media_path`, mas ninguém sobe o arquivo ainda)
-- A camada 1 (notificação) — captura em tempo real e Direct Reply
-- Consumo do `zap_outbox` pelo aparelho (a tabela e a reserva atômica já existem)
+- Iniciar conversa nova pelo ZapMóvel (o Direct Reply só responde; iniciar
+  exigiria abrir `wa.me/<numero>` e tocar em enviar por acessibilidade)
+- Deploy da rota na Vercel — hoje o teste depende de `adb reverse` e do cabo
 - Disparo automático do backup do MIUI (a activity é exportada:
   `miui.intent.backup.LOCAL_HOME_ACTIVITY`, mas pede a senha do aparelho)
+- Ciclo do msgstore rodando sozinho no tablet, via Termux
 
 ## Camada 1 — o app companion (android-agent/)
 
@@ -142,3 +144,35 @@ notificação.
 URL e conta já vêm preenchidas no app (`Config.URL_PADRAO` /
 `CONTA_PADRAO`); só o token precisa ser digitado. Para o teste por cabo:
 `adb reverse tcp:3000 tcp:3000` e URL `http://localhost:3000`.
+
+## Envio: Direct Reply pela fila
+
+```
+/api/send (conta transport=android)
+   -> zap_outbox (fila)  +  bolha 'pending' na conversa
+   -> agente puxa /api/outbox/next a cada 10s (reserva com skip locked)
+   -> ReplyRegistry dispara o PendingIntent da ação "Responder"
+   -> /api/outbox/ack marca 'sent' e a bolha deixa de ser pendente
+```
+
+Entre um envio e outro há pausa aleatória de 3 a 7 segundos: rajada é o padrão
+que motivou as suspensões que originaram este projeto.
+
+**Limite estrutural:** a ação "Responder" só existe enquanto a notificação
+daquela conversa está viva. Abrir o chat no tablet cancela o `PendingIntent` e
+o envio falha com *"notificação expirou"*. Consequências: o tablet precisa ficar
+como servidor, sem ninguém mexendo na tela; e dá para **responder** quem
+escreveu, não para **iniciar** conversa.
+
+Falha não volta direto para `queued` pelo ack — quem devolve à fila é a própria
+`zap_outbox_claim`, recuperando linhas presas em `sending` há mais de 5 minutos.
+Com `attempts < 5`, uma falha permanente esgota em vez de virar laço.
+
+## Reconciliação: a rede de segurança do timestamp
+
+A `dedupe_key` trunca no segundo, então basta a notificação e o msgstore
+discordarem em 1 segundo para a mensagem duplicar. É ainda mais provável na
+bolha otimista: o horário que gravamos não é o horário em que o WhatsApp de fato
+enviou. Por isso, quando a chave exata não casa, a ingestão procura a linha
+provisória por `(remote_jid, from_me, conteúdo)` dentro de uma janela de 3
+minutos.

@@ -1,3 +1,5 @@
+/Users/daniel/ZapMovel/android-agent/src/main/java/com/zapmovel/agent/ReplyRegistry.java
+/Users/daniel/ZapMovel/android-agent/src/main/java/com/zapmovel/agent/OutboxPoller.java
 /Users/daniel/ZapMovel/android-agent/src/main/java/com/zapmovel/agent/WaNotificationListener.java
 /Users/daniel/ZapMovel/android-agent/src/main/java/com/zapmovel/agent/MainActivity.java
 /Users/daniel/ZapMovel/android-agent/src/main/java/com/zapmovel/agent/Sender.java

@@ -50,10 +50,31 @@ public class WaNotificationListener extends NotificationListenerService {
             }
         });
 
+    private OutboxPoller poller;
+    private java.util.concurrent.ScheduledExecutorService agenda;
+
     @Override public void onCreate() {
         super.onCreate();
         cfg = new Config(this);
         sender = new Sender(cfg);
+        poller = new OutboxPoller(this, cfg);
+
+        // O ciclo da fila vive junto com o listener: os dois dependem das mesmas
+        // notificações, e um serviço só é mais simples de manter vivo na MIUI do
+        // que dois. 10s é um meio-termo entre resposta rápida e tráfego à toa.
+        agenda = java.util.concurrent.Executors.newSingleThreadScheduledExecutor();
+        agenda.scheduleWithFixedDelay(() -> {
+            try {
+                poller.ciclo();
+            } catch (Throwable t) {
+                Log.w(Sender.TAG, "ciclo abortou: " + t.getMessage());
+            }
+        }, 5, 10, java.util.concurrent.TimeUnit.SECONDS);
+    }
+
+    @Override public void onDestroy() {
+        if (agenda != null) agenda.shutdownNow();
+        super.onDestroy();
     }
 
     @Override public void onListenerConnected() {
@@ -84,6 +105,10 @@ public class WaNotificationListener extends NotificationListenerService {
             Log.w(Sender.TAG, "sem shortcutId — descartada");
             return;
         }
+
+        // Guarda a ação "Responder" desta conversa antes de qualquer coisa: é o
+        // que permite enviar depois, e ela só existe enquanto a notificação vive.
+        ReplyRegistry.registrar(jid, n);
 
         final String titulo = texto(extras.getCharSequence(Notification.EXTRA_TITLE));
         final boolean grupo = extras.getBoolean("android.isGroupConversation", false);

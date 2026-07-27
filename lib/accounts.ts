@@ -74,13 +74,22 @@ export async function assertLiveInstance(instance: string): Promise<void> {
   if (acc.kind !== "live") throw new Error(`conta '${instance}' é somente leitura (arquivo importado)`);
   // Conta do tablet não passa pelo Evolution. Sem esta guarda, o envio sairia
   // pela conta errada — e com um LID no lugar do telefone, que não é um número
-  // discável. O caminho certo (fila zap_outbox + agente no aparelho) ainda não
-  // está pronto.
+  // discável.
   if (acc.transport === "android") {
-    throw new Error(
-      `conta '${instance}' usa o aparelho Android — envio pelo ZapMóvel ainda não implementado`
-    );
+    // O envio existe, mas por outro caminho: a fila zap_outbox, consumida pelo
+    // aparelho. Quem chama esta função está prestes a falar com o Evolution,
+    // que não serve para esta conta.
+    throw new Error(`conta '${instance}' usa o aparelho Android — use a fila de saída`);
   }
+}
+
+// Como a conta envia: 'evolution' fala com a API; 'android' enfileira em
+// zap_outbox para o aparelho consumir.
+export async function getTransport(instance: string): Promise<"evolution" | "android"> {
+  const acc = (await listAccounts()).find((a) => a.instance === instance);
+  if (!acc) throw new Error(`conta '${instance}' não cadastrada`);
+  if (acc.kind !== "live") throw new Error(`conta '${instance}' é somente leitura (arquivo importado)`);
+  return acc.transport;
 }
 
 // Resolve URL + apikey do Evolution para uma conta: usa a configuração

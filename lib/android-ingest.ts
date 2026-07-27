@@ -89,13 +89,44 @@ export async function normalizeAndroidBatch(
     if (r.dedupe_key && !notifRowByKey.has(r.dedupe_key)) notifRowByKey.set(r.dedupe_key, r.id);
   }
 
+  // Rede de segurança para o timestamp. A dedupe_key trunca no segundo, então
+  // basta a notificação e o msgstore discordarem em 1 segundo — ou a bolha
+  // otimista ter sido criada antes do WhatsApp de fato enviar — para as chaves
+  // não baterem e a mensagem duplicar. Aqui procuramos a provisória pelo
+  // conteúdo dentro de uma janela de tempo, que é robusto a esse desencontro.
+  const semChave = messages.filter(
+    (m) => !m.dedupe_key || !notifRowByKey.has(m.dedupe_key)
+  );
+  const porConteudo = new Map<string, number>();
+  if (semChave.length) {
+    const jids = [...new Set(semChave.map((m) => m.remote_jid))];
+    const instantes = semChave.map((m) => m.msg_timestamp);
+    const JANELA = 180_000; // 3 minutos
+    const { data: candidatas } = await db
+      .from("zap_messages")
+      .select("id,remote_jid,from_me,content,msg_timestamp")
+      .eq("instance", instance)
+      .eq("origin", "notif")
+      .in("remote_jid", jids.slice(0, 100))
+      .gte("msg_timestamp", new Date(Math.min(...instantes) - JANELA).toISOString())
+      .lte("msg_timestamp", new Date(Math.max(...instantes) + JANELA).toISOString());
+
+    for (const c of candidatas ?? []) {
+      const chave = `${c.remote_jid}|${c.from_me}|${(c.content ?? "").trim()}`;
+      if (!porConteudo.has(chave)) porConteudo.set(chave, c.id);
+    }
+  }
+
   const toReconcile: { id: number; row: ReturnType<typeof toRow> }[] = [];
   const toUpsert: Record<string, unknown>[] = []; // upsert por (instance, message_id)
   const usedNotifRows = new Set<number>();
 
   for (const m of messages) {
     const row = toRow(m);
-    const notifId = m.dedupe_key ? notifRowByKey.get(m.dedupe_key) : undefined;
+    // primeiro a chave exata; se ela não casar, cai na busca por conteúdo
+    const notifId =
+      (m.dedupe_key ? notifRowByKey.get(m.dedupe_key) : undefined) ??
+      porConteudo.get(`${m.remote_jid}|${m.from_me}|${(m.content ?? "").trim()}`);
 
     // Só reconcilia se o id real ainda não existir — do contrário o UPDATE
     // colidiria com a unicidade (instance, message_id).

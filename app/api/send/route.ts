@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { sendText, instanceName, type QuotedRef } from "@/lib/evolution";
-import { assertLiveInstance, getEvolutionConfig } from "@/lib/accounts";
+import { assertLiveInstance, getEvolutionConfig, getTransport } from "@/lib/accounts";
 import { supabaseAdmin } from "@/lib/supabase-server";
 import { jidToPhone } from "@/lib/normalize";
+import { enqueueAndroid } from "@/lib/outbox";
 
 export async function POST(req: NextRequest) {
   const { jid, text, instance, quotedMessageId } = await req.json().catch(() => ({}));
@@ -12,6 +13,13 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    // Conta do aparelho não fala com o Evolution: entra na fila e o agente
+    // no tablet responde pela própria notificação do WhatsApp.
+    if ((await getTransport(inst)) === "android") {
+      const { outboxId, messageId } = await enqueueAndroid(supabaseAdmin(), inst, jid, text.trim());
+      return NextResponse.json({ ok: true, id: messageId, queued: outboxId });
+    }
+
     await assertLiveInstance(inst);
     const db = supabaseAdmin();
 
