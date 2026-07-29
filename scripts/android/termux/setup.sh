@@ -29,6 +29,9 @@ pkg install -y python >/dev/null
 echo "==> copiando os scripts"
 mkdir -p "$CASA"
 cp "$ORIGEM/sync_msgstore.py" "$CASA/"
+# upload_media.py faltava aqui: sem ele o ciclo trazia a mensagem mas nunca o
+# arquivo, e toda foto virava bolha "📷 Foto" vazia
+cp "$ORIGEM/upload_media.py" "$CASA/"
 cp "$ORIGEM/loop.sh" "$CASA/"
 chmod +x "$CASA/loop.sh"
 
