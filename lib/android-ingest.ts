@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { sendPushToAll } from "./push";
-import { jidToLabel } from "./normalize";
+import { assinaturaConteudo, jidToLabel } from "./normalize";
 
 // Uma mensagem vinda do aparelho. Duas origens a produzem:
 //   'msgstore' — scripts/android/sync_msgstore.py, a fonte de verdade
@@ -114,7 +114,10 @@ export async function normalizeAndroidBatch(
       .lte("msg_timestamp", new Date(Math.max(...instantes) + JANELA).toISOString());
 
     for (const c of candidatas ?? []) {
-      const chave = `${c.remote_jid}|${c.from_me}|${(c.content ?? "").trim()}`;
+      // mesma assinatura do eco: a linha provisória guarda o texto como a
+      // notificação o entregou, sem formatação e possivelmente cortado, e o
+      // msgstore guarda o original — comparar cru nunca casava as duas
+      const chave = `${c.remote_jid}|${c.from_me}|${assinaturaConteudo(c.content)}`;
       if (!porConteudo.has(chave)) porConteudo.set(chave, c.id);
     }
   }
@@ -128,7 +131,7 @@ export async function normalizeAndroidBatch(
     // primeiro a chave exata; se ela não casar, cai na busca por conteúdo
     const notifId =
       (m.dedupe_key ? notifRowByKey.get(m.dedupe_key) : undefined) ??
-      porConteudo.get(`${m.remote_jid}|${m.from_me}|${(m.content ?? "").trim()}`);
+      porConteudo.get(`${m.remote_jid}|${m.from_me}|${assinaturaConteudo(m.content)}`);
 
     // Só reconcilia se o id real ainda não existir — do contrário o UPDATE
     // colidiria com a unicidade (instance, message_id).
@@ -229,9 +232,11 @@ async function ingestNotif(
       .gte("msg_timestamp", new Date(Math.min(...instantes) - JANELA).toISOString())
       .lte("msg_timestamp", new Date(Math.max(...instantes) + JANELA).toISOString());
 
-    const minhas = new Set((enviadas ?? []).map((r) => `${r.remote_jid}|${(r.content ?? "").trim()}`));
+    const minhas = new Set(
+      (enviadas ?? []).map((r) => `${r.remote_jid}|${assinaturaConteudo(r.content)}`)
+    );
     for (const m of recebidas) {
-      if (minhas.has(`${m.remote_jid}|${(m.content ?? "").trim()}`)) ecos.add(m.dedupe_key);
+      if (minhas.has(`${m.remote_jid}|${assinaturaConteudo(m.content)}`)) ecos.add(m.dedupe_key);
     }
   }
 

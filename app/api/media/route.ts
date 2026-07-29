@@ -25,18 +25,25 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "id inválido" }, { status: 400 });
   }
 
-  // 1) bucket primeiro (jpg é o mais comum, depois os outros formatos)
-  for (const ext of KNOWN_MEDIA_EXTENSIONS) {
-    const head = await fetch(bucketUrl(`${id}.${ext}`), { method: "HEAD", cache: "no-store" });
-    if (head.ok) return NextResponse.redirect(bucketUrl(`${id}.${ext}`), 302);
-  }
-
-  // 2) fallback: Evolution da conta dona da mensagem (o message_id é único no WhatsApp)
   const db = supabaseAdmin();
   let query = db.from("zap_messages").select("raw,instance").eq("message_id", id);
   if (acc) query = query.eq("instance", acc);
   const { data: row } = await query.limit(1).maybeSingle();
 
+  // 1) a própria mensagem diz onde o arquivo está. Serve qualquer extensão —
+  // inclusive o '.bin' de um mime que não está na tabela — e troca até 19 HEADs
+  // sequenciais por nenhum.
+  const guardado = (row?.raw as any)?.media_stored as string | undefined;
+  if (guardado) return NextResponse.redirect(bucketUrl(guardado), 302);
+
+  // 2) mídia da era Evolution: está no bucket, mas sem a marca. Sonda os
+  // formatos conhecidos (jpg é o mais comum, por isso vem primeiro).
+  for (const ext of KNOWN_MEDIA_EXTENSIONS) {
+    const head = await fetch(bucketUrl(`${id}.${ext}`), { method: "HEAD", cache: "no-store" });
+    if (head.ok) return NextResponse.redirect(bucketUrl(`${id}.${ext}`), 302);
+  }
+
+  // 3) fallback: Evolution da conta dona da mensagem (o message_id é único no WhatsApp)
   const key = (row?.raw as any)?.key;
   const instance = row?.instance ?? acc ?? DEFAULT_INSTANCE;
   // sem raw.key não dá para pedir ao Evolution (ex.: mensagem importada de backup)

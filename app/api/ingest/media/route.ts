@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase-server";
+import { extFor, typeFor } from "@/lib/media-cache";
 
 // Recebe o arquivo que o agente leu da URI da própria notificação e o guarda no
 // bucket chat_media, com o mesmo nome que /api/media espera (<message_id>.<ext>).
@@ -7,18 +8,6 @@ import { supabaseAdmin } from "@/lib/supabase-server";
 // O corpo é o binário puro, não JSON em base64: base64 infla 33% e o limite de
 // corpo da Vercel é o gargalo aqui.
 export const maxDuration = 60;
-
-const EXT: Record<string, string> = {
-  "image/jpeg": "jpg",
-  "image/png": "png",
-  "image/webp": "webp",
-  "image/gif": "gif",
-  "video/mp4": "mp4",
-  "audio/ogg": "ogg",
-  "audio/mpeg": "mp3",
-  "audio/mp4": "m4a",
-  "application/pdf": "pdf",
-};
 
 // Vídeo é o que estoura cota: no histórico deste aparelho foram 6,67 GB em
 // apenas 1.285 arquivos. O limite protege o Storage de um único arquivo grande.
@@ -59,7 +48,7 @@ export async function POST(req: NextRequest) {
   // consumindo cota sem nunca ser exibido.
   const { data: atual } = await db
     .from("zap_messages")
-    .select("raw")
+    .select("raw,type")
     .eq("instance", instance)
     .eq("message_id", messageId)
     .maybeSingle();
@@ -70,8 +59,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const ext = EXT[mime] ?? "bin";
-  const caminho = `${messageId}.${ext}`;
+  const caminho = `${messageId}.${extFor(mime)}`;
 
   const { error: erroUpload } = await db.storage
     .from("chat_media")
@@ -83,11 +71,28 @@ export async function POST(req: NextRequest) {
 
   // Marca na mensagem que a mídia já está no bucket — é o que faz a bolha
   // deixar de ser um rótulo "📷 Foto" e virar a imagem de verdade.
+  //
+  // O `type` também é corrigido aqui, e é o que conserta a foto que não
+  // aparecia. A notificação de uma imagem chega em duas etapas: a primeira sem
+  // a URI (o WhatsApp ainda está baixando), e é ela que cria a linha — como
+  // 'text', porque naquele momento só existe o rótulo "📷 Foto". Na segunda a
+  // URI chega, mas a dedupe_key é a mesma e o agente não reenvia a mensagem,
+  // só sobe o arquivo; a linha ficava 'text' para sempre e a conversa desenhava
+  // texto em cima de uma imagem que estava no bucket. Áudio escapava porque a
+  // notificação de voz já vem com a URI de primeira, numa etapa só.
+  //
+  // Aqui é o ponto por onde toda mídia do aparelho passa e o único onde o mime
+  // real do arquivo é conhecido — corrigir o tipo aqui vale para foto,
+  // figurinha, vídeo e documento de uma vez.
+  const tipo = atual.type === "text" ? typeFor(mime) : atual.type;
   await db
     .from("zap_messages")
-    .update({ raw: { ...((atual?.raw as object) ?? {}), media_stored: caminho, mime_type: mime } })
+    .update({
+      type: tipo,
+      raw: { ...((atual?.raw as object) ?? {}), media_stored: caminho, mime_type: mime },
+    })
     .eq("instance", instance)
     .eq("message_id", messageId);
 
-  return NextResponse.json({ ok: true, path: caminho, bytes: buf.length });
+  return NextResponse.json({ ok: true, path: caminho, type: tipo, bytes: buf.length });
 }

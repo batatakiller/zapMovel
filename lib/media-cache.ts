@@ -37,6 +37,18 @@ export function extFor(mimetype: string): string {
   return "bin";
 }
 
+// Mesma tabela que WaNotificationListener.rotulo() usa no aparelho: o tipo da
+// bolha sai do mime. A conversa só desenha imagem/áudio/vídeo quando `type` diz
+// que é mídia — com 'text' ela mostra o rótulo "📷 Foto" e nunca o arquivo.
+export function typeFor(mimetype: string): string {
+  const base = mimetype?.split(";")[0] ?? "";
+  if (base.startsWith("image/webp")) return "sticker";
+  if (base.startsWith("image/")) return "image";
+  if (base.startsWith("video/")) return "video";
+  if (base.startsWith("audio/")) return "audio";
+  return "document";
+}
+
 const MEDIA_TYPES = new Set(["image", "sticker", "audio", "video", "document"]);
 
 function bucketUrl(name: string): string {

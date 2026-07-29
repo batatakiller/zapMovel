@@ -177,3 +177,24 @@ export function jidToLabel(jid: string): string {
   if (isLid(jid)) return `Contato ·${jidToPhone(jid).slice(-4)}`;
   return jidToPhone(jid);
 }
+
+// A notificação do Android não devolve o texto como ele foi enviado: o
+// WhatsApp remove o *negrito* e o _itálico_ e corta a mensagem longa por volta
+// de mil caracteres. Comparar o conteúdo byte a byte, então, nunca casa a
+// versão que saiu daqui com a versão que voltou pela notificação — e é assim
+// que o eco escapava e a mesma mensagem aparecia duas vezes na conversa, uma
+// verde e uma branca (caso real: 1857 caracteres enviados, 997 de volta).
+//
+// Comparar por esta assinatura casa as duas. O corte em 400 é o compromisso:
+// alto o bastante para não confundir duas mensagens de um mesmo modelo (as de
+// licença só divergem lá pelo caractere 150) e baixo o bastante para caber
+// dentro do que a notificação preserva.
+const ASSINATURA_CHARS = 400;
+
+export function assinaturaConteudo(s: string | null | undefined): string {
+  return (s ?? "")
+    .replace(/[*_~`]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, ASSINATURA_CHARS);
+}
