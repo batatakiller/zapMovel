@@ -395,13 +395,18 @@ def main():
             sent += len(rows)
             log(f"enviadas {sent} mensagens (último _id {max_id})")
 
-        save_state({
-            **state,
-            "last_row_id": max_id,
-            "last_sync": time.strftime("%Y-%m-%dT%H:%M:%S"),
-            "last_zip": zip_path.name,
-        })
-        log(f"pronto: {sent} mensagens novas{' (dry-run)' if args.dry_run else ''}")
+        # --dry-run NÃO pode gravar o estado: ele não enviou nada, e avançar o
+        # last_row_id faria o ciclo seguinte pular justamente as mensagens que o
+        # ensaio acabou de contar — perda silenciosa, que só aparece quando
+        # alguém nota a conversa faltando dias depois.
+        if not args.dry_run:
+            save_state({
+                **state,
+                "last_row_id": max_id,
+                "last_sync": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                "last_zip": zip_path.name,
+            })
+        log(f"pronto: {sent} mensagens novas{' (dry-run, estado preservado)' if args.dry_run else ''}")
     finally:
         if con:
             con.close()

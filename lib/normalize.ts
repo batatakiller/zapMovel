@@ -198,3 +198,30 @@ export function assinaturaConteudo(s: string | null | undefined): string {
     .trim()
     .slice(0, ASSINATURA_CHARS);
 }
+
+/**
+ * Entre as linhas provisórias de mesmo conteúdo, a certa é a mais próxima no
+ * tempo — e só dentro da janela, senão a foto de ontem casaria com a de hoje.
+ *
+ * Existe porque o conteúdo sozinho não distingue mídia: ali ele é sempre o
+ * mesmo rótulo ("📷 Foto"), então todas as fotos de uma conversa competem pela
+ * mesma chave. Sem o desempate por tempo, uma reconciliava e o resto duplicava.
+ */
+export function maisProxima(
+  candidatas: { id: number; ts: number }[] | undefined,
+  ts: number,
+  usadas: Set<number>,
+  janela: number
+): number | undefined {
+  let melhor: number | undefined;
+  let menorDistancia = Infinity;
+  for (const c of candidatas ?? []) {
+    if (usadas.has(c.id)) continue;
+    const distancia = Math.abs(c.ts - ts);
+    if (distancia <= janela && distancia < menorDistancia) {
+      menorDistancia = distancia;
+      melhor = c.id;
+    }
+  }
+  return melhor;
+}

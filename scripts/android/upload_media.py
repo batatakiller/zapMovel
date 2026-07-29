@@ -50,7 +50,7 @@ def carregar_env():
         sys.exit(f"faltam variáveis: {', '.join(faltando)}")
 
 
-def resolver(media_path: str):
+def resolver(media_path: str, raizes=None):
     """Acha o arquivo real a partir do caminho gravado pelo WhatsApp."""
     if not media_path:
         return None
@@ -59,7 +59,7 @@ def resolver(media_path: str):
         return p
     # o caminho costuma vir como 'Media/WhatsApp Business Images/IMG-....jpg'
     rel = media_path[media_path.index("Media/"):] if "Media/" in media_path else media_path
-    for raiz in RAIZES:
+    for raiz in raizes or RAIZES:
         alvo = raiz / rel
         if alvo.exists():
             return alvo
@@ -103,6 +103,9 @@ def main():
                     help="vídeo fica de fora por padrão: é o que mais consome cota")
     ap.add_argument("--limite", type=int, default=200)
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--raiz", type=Path, action="append",
+                    help="raiz alternativa da pasta de mídia. Permite rodar de um PC "
+                         "sobre uma cópia puxada por adb, em vez de dentro do Termux.")
     args = ap.parse_args()
 
     carregar_env()
@@ -118,7 +121,7 @@ def main():
 
     enviados = sem_arquivo = falhas = 0
     for it in itens:
-        arquivo = resolver(it.get("media_path"))
+        arquivo = resolver(it.get("media_path"), args.raiz)
         if not arquivo:
             sem_arquivo += 1
             continue

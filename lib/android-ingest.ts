@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { sendPushToAll } from "./push";
-import { assinaturaConteudo, jidToLabel } from "./normalize";
+import { assinaturaConteudo, jidToLabel, maisProxima } from "./normalize";
 
 // Uma mensagem vinda do aparelho. Duas origens a produzem:
 //   'msgstore' — scripts/android/sync_msgstore.py, a fonte de verdade
@@ -99,11 +99,15 @@ export async function normalizeAndroidBatch(
   const semChave = messages.filter(
     (m) => !m.dedupe_key || !notifRowByKey.has(m.dedupe_key)
   );
-  const porConteudo = new Map<string, number>();
+  // Cada chave guarda TODAS as provisórias com aquele conteúdo, com o instante
+  // de cada uma. Guardar só a primeira não funciona para mídia: o conteúdo ali
+  // é sempre o mesmo rótulo ("📷 Foto"), então dez fotos de uma conversa caem
+  // na mesma chave — uma reconciliava e as outras nove viravam linha duplicada.
+  const JANELA = 180_000; // 3 minutos
+  const porConteudo = new Map<string, { id: number; ts: number }[]>();
   if (semChave.length) {
     const jids = [...new Set(semChave.map((m) => m.remote_jid))];
     const instantes = semChave.map((m) => m.msg_timestamp);
-    const JANELA = 180_000; // 3 minutos
     const { data: candidatas } = await db
       .from("zap_messages")
       .select("id,remote_jid,from_me,content,msg_timestamp")
@@ -118,9 +122,20 @@ export async function normalizeAndroidBatch(
       // notificação o entregou, sem formatação e possivelmente cortado, e o
       // msgstore guarda o original — comparar cru nunca casava as duas
       const chave = `${c.remote_jid}|${c.from_me}|${assinaturaConteudo(c.content)}`;
-      if (!porConteudo.has(chave)) porConteudo.set(chave, c.id);
+      const lista = porConteudo.get(chave);
+      const item = { id: c.id, ts: new Date(c.msg_timestamp).getTime() };
+      if (lista) lista.push(item);
+      else porConteudo.set(chave, [item]);
     }
   }
+
+  const acharProvisoria = (m: AndroidMessage, usadas: Set<number>) =>
+    maisProxima(
+      porConteudo.get(`${m.remote_jid}|${m.from_me}|${assinaturaConteudo(m.content)}`),
+      m.msg_timestamp,
+      usadas,
+      JANELA
+    );
 
   const toReconcile: { id: number; row: ReturnType<typeof toRow> }[] = [];
   const toUpsert: Record<string, unknown>[] = []; // upsert por (instance, message_id)
@@ -131,7 +146,7 @@ export async function normalizeAndroidBatch(
     // primeiro a chave exata; se ela não casar, cai na busca por conteúdo
     const notifId =
       (m.dedupe_key ? notifRowByKey.get(m.dedupe_key) : undefined) ??
-      porConteudo.get(`${m.remote_jid}|${m.from_me}|${assinaturaConteudo(m.content)}`);
+      acharProvisoria(m, usedNotifRows);
 
     // Só reconcilia se o id real ainda não existir — do contrário o UPDATE
     // colidiria com a unicidade (instance, message_id).
