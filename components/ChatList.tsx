@@ -173,22 +173,6 @@ export default function ChatList() {
       >
         <h1 className="text-xl font-semibold">ZapMóvel</h1>
         <div className="flex items-center gap-4">
-          <button
-            onClick={() => {
-              const num = prompt("Digite o número com DDD (ex: 5511919025098):");
-              if (num) {
-                const clean = num.replace(/\D/g, "");
-                if (clean.length >= 10) {
-                  const targetInstance = filter === "all" ? (padrao || accounts[0]?.instance || "tablet-loja") : filter;
-                  window.location.href = `/chat/${encodeURIComponent(targetInstance)}/${encodeURIComponent(clean + "@s.whatsapp.net")}`;
-                }
-              }
-            }}
-            className="text-lg"
-            title="Nova conversa"
-          >
-            ✏️
-          </button>
           <Link href="/quick-replies" className="text-lg" title="Respostas rápidas">
             ⚡
           </Link>
@@ -227,7 +211,7 @@ export default function ChatList() {
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Pesquisar nome ou digitar número para enviar"
+            placeholder="Pesquisar nome, telefone ou pedido"
             className="w-full bg-transparent text-[15px] outline-none"
             style={{ color: "var(--wa-text)" }}
           />
@@ -238,29 +222,6 @@ export default function ChatList() {
           )}
         </div>
       </div>
-
-      {(() => {
-        const digits = query.replace(/\D/g, "");
-        if (digits.length < 8) return null;
-        const phone = digits.length === 10 || digits.length === 11 ? `55${digits}` : digits;
-        const targetInstance = filter === "all" ? (padrao || accounts[0]?.instance || "tablet-loja") : filter;
-        return (
-          <div className="px-3 pb-2" style={{ background: "var(--wa-panel)" }}>
-            <Link
-              href={`/chat/${encodeURIComponent(targetInstance)}/${encodeURIComponent(phone + "@s.whatsapp.net")}`}
-              className="flex items-center gap-3 rounded-xl px-4 py-3 text-white font-medium shadow-md transition-all active:scale-[0.98]"
-              style={{ background: "var(--wa-accent)" }}
-            >
-              <span className="text-xl">💬</span>
-              <div className="min-w-0 flex-1">
-                <p className="truncate font-semibold text-sm">Enviar mensagem para +{phone}</p>
-                <p className="truncate text-xs opacity-90">Clique para iniciar a conversa agora</p>
-              </div>
-              <span className="text-lg">➔</span>
-            </Link>
-          </div>
-        );
-      })()}
 
       {/* Filtro por conta (só quando há mais de uma) */}
       {multiAccount && (
@@ -290,20 +251,9 @@ export default function ChatList() {
             Conversas
           </p>
           {results.chats.length === 0 && (
-            <div className="px-4 py-2">
-              <p className="text-sm" style={{ color: "var(--wa-text-muted)" }}>
-                Nenhum contato encontrado
-              </p>
-              {query.replace(/\D/g, "").length >= 10 && (
-                <Link
-                  href={`/chat/${encodeURIComponent(filter === "all" ? padrao || accounts[0]?.instance || "tablet-loja" : filter)}/${encodeURIComponent(query.replace(/\D/g, "") + "@s.whatsapp.net")}`}
-                  className="mt-2 inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm text-white font-medium"
-                  style={{ background: "var(--wa-accent)" }}
-                >
-                  💬 Iniciar conversa com {query.replace(/\D/g, "")}
-                </Link>
-              )}
-            </div>
+            <p className="px-4 py-1 text-sm" style={{ color: "var(--wa-text-muted)" }}>
+              Nenhum contato encontrado
+            </p>
           )}
           <ul>
             {results.chats.map((c) => (

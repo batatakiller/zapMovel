@@ -39,17 +39,7 @@ public class OutboxPoller {
                 String jid = item.getString("remote_jid");
                 String texto = item.optString("content", "");
 
-                String erro = null;
-                if (ReplyRegistry.temResposta(jid)) {
-                    erro = ReplyRegistry.responder(ctx, jid, texto);
-                } else if (jid.endsWith("@lid")) {
-                    erro = "Sem notificação ativa para ID interno (@lid). Aguarde o cliente enviar uma nova mensagem.";
-                } else if (WaAccessibilityService.isRunning()) {
-                    Log.i(Sender.TAG, "Sem notificação para " + jid + ". Usando fallback de Acessibilidade...");
-                    erro = WaAccessibilityService.enviarViaAcessibilidade(ctx, jid, texto);
-                } else {
-                    erro = "sem notificação ativa e serviço de acessibilidade desativado no aparelho";
-                }
+                String erro = ReplyRegistry.responder(ctx, jid, texto);
                 confirmar(id, erro == null, erro);
 
                 // Intervalo entre mensagens: disparo em rajada é o padrão que
@@ -93,8 +83,7 @@ public class OutboxPoller {
             try (OutputStream os = c.getOutputStream()) {
                 os.write(b.toString().getBytes(StandardCharsets.UTF_8));
             }
-            int code = c.getResponseCode();
-            Log.i(Sender.TAG, "ack para item " + id + " (ok=" + ok + "): HTTP " + code);
+            c.getResponseCode();
             c.disconnect();
         } catch (Exception e) {
             Log.w(Sender.TAG, "ack falhou: " + e.getMessage());
