@@ -1,6 +1,7 @@
 package com.zapmovel.agent;
 
 import android.accessibilityservice.AccessibilityService;
+import android.app.KeyguardManager;
 import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
@@ -84,7 +85,7 @@ public class WaAccessibilityService extends AccessibilityService {
         }
 
         try {
-            // Se a tela do tablet estiver apagada, acende temporariamente
+            // Se a tela do tablet estiver apagada ou bloqueada, acende e desbloqueia
             try {
                 PowerManager pm = (PowerManager) ctx.getSystemService(Context.POWER_SERVICE);
                 if (pm != null && !pm.isInteractive()) {
@@ -95,8 +96,14 @@ public class WaAccessibilityService extends AccessibilityService {
                     );
                     wl.acquire(5000);
                 }
+                KeyguardManager km = (android.app.KeyguardManager) ctx.getSystemService(Context.KEYGUARD_SERVICE);
+                if (km != null && km.isKeyguardLocked()) {
+                    @SuppressWarnings("deprecation")
+                    KeyguardManager.KeyguardLock kl = km.newKeyguardLock("ZapAgent:Unlock");
+                    kl.disableKeyguard();
+                }
             } catch (Exception e) {
-                Log.w(TAG, "Não foi possível acender a tela: " + e.getMessage());
+                Log.w(TAG, "Não foi possível acender/desbloquear a tela: " + e.getMessage());
             }
 
             // Fecha painéis de notificação ou diálogos do sistema que possam estar abertos
