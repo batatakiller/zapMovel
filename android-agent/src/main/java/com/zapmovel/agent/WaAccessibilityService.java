@@ -103,16 +103,21 @@ public class WaAccessibilityService extends AccessibilityService {
                 ctx.sendBroadcast(new Intent(Intent.ACTION_CLOSE_SYSTEM_DIALOGS));
             } catch (Exception e) {}
 
-            // Monta a Intent de envio direto pelo esquema nativo do WhatsApp
+            // Monta a Intent de envio direto pelo WhatsApp Business
             String encodedText = URLEncoder.encode(texto, StandardCharsets.UTF_8.name());
-            String uriStr = "whatsapp://send?phone=" + phone + "&text=" + encodedText;
+            String uriStr = "https://api.whatsapp.com/send?phone=" + phone + "&text=" + encodedText;
             Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(uriStr));
-            intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+            intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
 
             // Força o envio pelo WhatsApp Business (com.whatsapp.w4b)
             intent.setPackage("com.whatsapp.w4b");
             ctx.startActivity(intent);
-            Log.i(TAG, "Intent nativa whatsapp:// disparada para " + phone);
+            Log.i(TAG, "Intent https://api.whatsapp.com/send disparada no WhatsApp Business para " + phone);
+
+            // Agenda varredura ativa para garantir verificação mesmo sem evento de acessibilidade do sistema
+            if (instance != null) {
+                instance.agendarVarreduraProativa();
+            }
 
             // Aguarda até 15 segundos pela conclusão da automação de clique
             boolean ok = send.latch.await(15, TimeUnit.SECONDS);
@@ -130,8 +135,22 @@ public class WaAccessibilityService extends AccessibilityService {
         }
     }
 
+    private void agendarVarreduraProativa() {
+        long[] delays = { 500, 1500, 3000, 5000 };
+        for (long delay : delays) {
+            mainHandler.postDelayed(this::processarScanInterface, delay);
+        }
+    }
+
     @Override
     public void onAccessibilityEvent(AccessibilityEvent event) {
+        CharSequence pkg = event.getPackageName();
+        if (pkg != null && pkg.toString().contains("whatsapp")) {
+            processarScanInterface();
+        }
+    }
+
+    private void processarScanInterface() {
         PendingSend current;
         synchronized (WaAccessibilityService.class) {
             current = activeSend;
@@ -139,16 +158,31 @@ public class WaAccessibilityService extends AccessibilityService {
 
         if (current == null || current.clicked) return;
 
-        CharSequence pkg = event.getPackageName();
-        if (pkg == null) return;
-        String pkgName = pkg.toString();
-
-        if (!pkgName.contains("whatsapp")) return;
-
         AccessibilityNodeInfo root = getRootInActiveWindow();
-        if (root == null) return;
+        if (root == null) {
+            Log.d(TAG, "processarScanInterface: root é null");
+            return;
+        }
+
+        CharSequence pkgName = root.getPackageName();
+        Log.d(TAG, "processarScanInterface: janela ativa = " + pkgName);
+
+        // Garantir que a caixa de texto tem exatamente a mensagem atual a ser enviada
+        AccessibilityNodeInfo inputField = findInputField(root);
+        if (inputField != null && current.text != null && !current.text.isEmpty()) {
+            CharSequence currentContent = inputField.getText();
+            String currentStr = currentContent != null ? currentContent.toString() : "";
+            if (!currentStr.equals(current.text)) {
+                Bundle arguments = new Bundle();
+                arguments.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, current.text);
+                boolean setOk = inputField.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments);
+                Log.i(TAG, "Preenchendo caixa de texto (atual='" + currentStr + "'): " + setOk);
+                return;
+            }
+        }
 
         AccessibilityNodeInfo sendButton = findSendButton(root);
+
         if (sendButton != null) {
             current.clicked = true;
             Log.i(TAG, "Botão de enviar localizado (" + sendButton.getViewIdResourceName() + "). Aplicando pausa humana...");
@@ -168,6 +202,22 @@ public class WaAccessibilityService extends AccessibilityService {
                 }
             }, 2500);
         }
+    }
+
+    private AccessibilityNodeInfo findInputField(AccessibilityNodeInfo node) {
+        if (node == null) return null;
+        String viewId = node.getViewIdResourceName();
+        if (viewId != null && viewId.endsWith(":id/entry")) {
+            return node;
+        }
+        if (node.getClassName() != null && node.getClassName().toString().contains("EditText")) {
+            return node;
+        }
+        for (int i = 0; i < node.getChildCount(); i++) {
+            AccessibilityNodeInfo result = findInputField(node.getChild(i));
+            if (result != null) return result;
+        }
+        return null;
     }
 
     private boolean performClickSafely(AccessibilityNodeInfo node) {
