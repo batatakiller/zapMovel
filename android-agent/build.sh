@@ -33,6 +33,7 @@ mkdir -p "$OUT/gen"
 "$BT/aapt2" link -o "$OUT/base.apk" -I "$PLATFORM" -R "$OUT/res.zip" \
   --manifest "$HERE/src/main/AndroidManifest.xml" \
   --min-sdk-version 26 --target-sdk-version 35 \
+  --auto-add-overlay \
   --java "$OUT/gen"
 
 echo "==> compilando java"

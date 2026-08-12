@@ -61,6 +61,12 @@ public class MainActivity extends Activity {
             startActivity(new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)));
         root.addView(acesso);
 
+        Button acessibilidade = new Button(this);
+        acessibilidade.setText("Ativar Serviço de Acessibilidade");
+        acessibilidade.setOnClickListener(v ->
+            startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
+        root.addView(acessibilidade);
+
         Button bateria = new Button(this);
         bateria.setText("Tirar da otimização de bateria");
         bateria.setOnClickListener(v -> {
@@ -135,6 +141,7 @@ public class MainActivity extends Activity {
     private void atualizarStatus() {
         StringBuilder sb = new StringBuilder();
         sb.append("Acesso às notificações: ").append(temAcesso() ? "LIBERADO" : "FALTA LIBERAR");
+        sb.append("\nServiço de Acessibilidade: ").append(WaAccessibilityService.isRunning() ? "ATIVO" : "FALTA ATIVAR");
         sb.append("\nConfiguração: ").append(cfg.isComplete() ? "completa" : "incompleta");
         sb.append("\nMensagens enviadas: ").append(cfg.totalSent());
         long t = cfg.lastSentAt();

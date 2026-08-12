@@ -39,7 +39,15 @@ public class OutboxPoller {
                 String jid = item.getString("remote_jid");
                 String texto = item.optString("content", "");
 
-                String erro = ReplyRegistry.responder(ctx, jid, texto);
+                String erro = null;
+                if (ReplyRegistry.temResposta(jid)) {
+                    erro = ReplyRegistry.responder(ctx, jid, texto);
+                } else if (WaAccessibilityService.isRunning()) {
+                    Log.i(Sender.TAG, "Sem notificação para " + jid + ". Usando fallback de Acessibilidade...");
+                    erro = WaAccessibilityService.enviarViaAcessibilidade(ctx, jid, texto);
+                } else {
+                    erro = "sem notificação ativa e serviço de acessibilidade desativado no aparelho";
+                }
                 confirmar(id, erro == null, erro);
 
                 // Intervalo entre mensagens: disparo em rajada é o padrão que
