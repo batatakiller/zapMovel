@@ -9,6 +9,7 @@ import android.os.Looper;
 import android.util.Log;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
+import android.view.accessibility.AccessibilityWindowInfo;
 
 import android.os.Bundle;
 import android.os.PowerManager;
@@ -158,7 +159,7 @@ public class WaAccessibilityService extends AccessibilityService {
 
         if (current == null || current.clicked) return;
 
-        AccessibilityNodeInfo root = getRootInActiveWindow();
+        AccessibilityNodeInfo root = getRealRoot();
         if (root == null) {
             Log.d(TAG, "processarScanInterface: root é null");
             return;
@@ -202,6 +203,27 @@ public class WaAccessibilityService extends AccessibilityService {
                 }
             }, 2500);
         }
+    }
+
+    private AccessibilityNodeInfo getRealRoot() {
+        AccessibilityNodeInfo root = getRootInActiveWindow();
+        if (root != null && (findInputField(root) != null || findSendButton(root) != null)) {
+            return root;
+        }
+        try {
+            List<AccessibilityWindowInfo> windows = getWindows();
+            if (windows != null) {
+                for (AccessibilityWindowInfo w : windows) {
+                    AccessibilityNodeInfo wRoot = w.getRoot();
+                    if (wRoot != null) {
+                        if (findInputField(wRoot) != null || findSendButton(wRoot) != null) {
+                            return wRoot;
+                        }
+                    }
+                }
+            }
+        } catch (Exception ignored) {}
+        return root;
     }
 
     private AccessibilityNodeInfo findInputField(AccessibilityNodeInfo node) {
