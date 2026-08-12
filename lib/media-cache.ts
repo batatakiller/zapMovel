@@ -64,17 +64,27 @@ export async function cacheMediaForRow(row: ZapRow): Promise<void> {
   const key = (row.raw as any)?.key;
   if (!key?.id) return;
 
-  // já está no bucket? evita buscar de novo no Evolution. Checa todas as
-  // extensões em paralelo (sequencial seria lento — até 19 round-trips).
-  const alreadyCached = await Promise.any(
-    KNOWN_MEDIA_EXTENSIONS.map(async (ext) => {
-      const head = await fetch(bucketUrl(`${row.message_id}.${ext}`), { method: "HEAD", cache: "no-store" });
-      if (!head.ok) throw new Error("not found");
-    })
-  )
-    .then(() => true)
-    .catch(() => false);
-  if (alreadyCached) return;
+  // Se já está marcado no raw que a mídia foi gravada, evita chamadas desnecessárias
+  if ((row.raw as any)?.media_stored) return;
+
+  const db = supabaseAdmin();
+
+  // já está no bucket? Busca pelo id da mensagem na storage (1 única consulta em vez de 19 HEAD requests HTTP)
+  const { data: files } = await db.storage
+    .from("chat_media")
+    .list("", { search: row.message_id, limit: 1 });
+
+  if (files && files.length > 0 && files[0].name) {
+    const fileName = files[0].name;
+    await db
+      .from("zap_messages")
+      .update({
+        raw: { ...((row.raw as object) ?? {}), media_stored: fileName },
+      })
+      .eq("instance", row.instance)
+      .eq("message_id", row.message_id);
+    return;
+  }
 
   try {
     const cfg = await getEvolutionConfig(row.instance);
@@ -93,11 +103,23 @@ export async function cacheMediaForRow(row: ZapRow): Promise<void> {
 
     const mimetype: string = json.mimetype ?? "application/octet-stream";
     const buf = Buffer.from(json.base64, "base64");
-    const db = supabaseAdmin();
+    const fileName = `${row.message_id}.${extFor(mimetype)}`;
+
     const { error } = await db.storage
       .from("chat_media")
-      .upload(`${row.message_id}.${extFor(mimetype)}`, buf, { contentType: mimetype, upsert: true });
-    if (error) console.error(`cacheMediaForRow(${row.message_id}): upload falhou:`, error.message);
+      .upload(fileName, buf, { contentType: mimetype, upsert: true });
+
+    if (error) {
+      console.error(`cacheMediaForRow(${row.message_id}): upload falhou:`, error.message);
+    } else {
+      await db
+        .from("zap_messages")
+        .update({
+          raw: { ...((row.raw as object) ?? {}), media_stored: fileName, mime_type: mimetype },
+        })
+        .eq("instance", row.instance)
+        .eq("message_id", row.message_id);
+    }
   } catch (e: any) {
     console.error(`cacheMediaForRow(${row.message_id}):`, e?.message);
   }

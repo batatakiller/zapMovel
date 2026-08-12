@@ -164,11 +164,8 @@ export default function ChatPage({ params }: { params: Promise<{ instance: strin
         }
       )
       .subscribe();
-    const timer = setInterval(() => {
-      if (document.visibilityState === "visible") load();
-    }, 5000);
+
     return () => {
-      clearInterval(timer);
       supabaseBrowser().removeChannel(channel);
     };
   }, [ready, instance, jid, load]);

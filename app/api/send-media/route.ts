@@ -52,7 +52,7 @@ export async function POST(req: NextRequest) {
           content: caption ? `📷 Foto — ${caption}` : "📷 Foto",
           status: "pending",
           msg_timestamp: new Date().toISOString(),
-          raw: result,
+          raw: { ...((result as object) ?? {}), media_stored: `${messageId}.${ext}` },
         },
         { onConflict: "instance,message_id" }
       );

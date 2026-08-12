@@ -128,6 +128,18 @@ export function extractReaction(instance: string, data: EvoMessage): ReactionRow
   };
 }
 
+export function cleanRaw(data: any): any {
+  if (!data || typeof data !== "object") return data;
+  const clone = JSON.parse(JSON.stringify(data));
+  if (clone.message && typeof clone.message === "object") {
+    delete clone.message.base64;
+    if (clone.message.imageMessage?.jpegThumbnail) delete clone.message.imageMessage.jpegThumbnail;
+    if (clone.message.videoMessage?.jpegThumbnail) delete clone.message.videoMessage.jpegThumbnail;
+    if (clone.message.stickerMessage?.jpegThumbnail) delete clone.message.stickerMessage.jpegThumbnail;
+  }
+  return clone;
+}
+
 export function normalizeUpsert(instance: string, data: EvoMessage): ZapRow | null {
   const key = data?.key;
   const jid = canonicalJid(key);
@@ -151,7 +163,7 @@ export function normalizeUpsert(instance: string, data: EvoMessage): ZapRow | nu
     status: key.fromMe ? normalizeStatus(data.status ?? "sent") : "received",
     msg_timestamp: ts.toISOString(),
     quoted_message_id: extractQuotedId(data.message),
-    raw: data,
+    raw: cleanRaw(data),
   };
 }
 

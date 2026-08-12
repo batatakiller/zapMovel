@@ -91,7 +91,7 @@ export default function ChatList() {
       .from("zap_messages")
       .select("id,instance,remote_jid,message_id,from_me,push_name,type,content,status,msg_timestamp")
       .order("msg_timestamp", { ascending: false })
-      .limit(1200);
+      .limit(200);
     if (!error && data) setMessages(data as ZapMessage[]);
     setLoading(false);
   }, []);
@@ -101,13 +101,27 @@ export default function ChatList() {
     load();
     const channel = supabaseBrowser()
       .channel("chat-list")
-      .on("postgres_changes", { event: "*", schema: "public", table: "zap_messages" }, () => load())
+      .on("postgres_changes", { event: "*", schema: "public", table: "zap_messages" }, (payload) => {
+        if (payload.eventType === "INSERT") {
+          const m = payload.new as ZapMessage;
+          if (m && m.message_id) {
+            setMessages((prev) => (prev.some((p) => p.message_id === m.message_id) ? prev : [m, ...prev]));
+          }
+        } else if (payload.eventType === "UPDATE") {
+          const m = payload.new as ZapMessage;
+          if (m && m.message_id) {
+            setMessages((prev) => prev.map((p) => (p.message_id === m.message_id ? { ...p, ...m } : p)));
+          }
+        } else if (payload.eventType === "DELETE") {
+          const old = payload.old as { message_id?: string; id?: string };
+          if (old?.message_id) {
+            setMessages((prev) => prev.filter((p) => p.message_id !== old.message_id));
+          }
+        }
+      })
       .subscribe();
-    const timer = setInterval(() => {
-      if (document.visibilityState === "visible") load();
-    }, 5000);
+
     return () => {
-      clearInterval(timer);
       supabaseBrowser().removeChannel(channel);
     };
   }, [ready, load]);

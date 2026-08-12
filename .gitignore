@@ -7,3 +7,4 @@ node_modules/
 .vercel
 __pycache__/
 *.pyc
+supabase_logs.json

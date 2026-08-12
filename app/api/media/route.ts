@@ -34,13 +34,32 @@ export async function GET(req: NextRequest) {
   // inclusive o '.bin' de um mime que não está na tabela — e troca até 19 HEADs
   // sequenciais por nenhum.
   const guardado = (row?.raw as any)?.media_stored as string | undefined;
-  if (guardado) return NextResponse.redirect(bucketUrl(guardado), 302);
+  if (guardado) {
+    return NextResponse.redirect(bucketUrl(guardado), {
+      status: 302,
+      headers: { "Cache-Control": "public, max-age=31536000, immutable" },
+    });
+  }
 
-  // 2) mídia da era Evolution: está no bucket, mas sem a marca. Sonda os
-  // formatos conhecidos (jpg é o mais comum, por isso vem primeiro).
-  for (const ext of KNOWN_MEDIA_EXTENSIONS) {
-    const head = await fetch(bucketUrl(`${id}.${ext}`), { method: "HEAD", cache: "no-store" });
-    if (head.ok) return NextResponse.redirect(bucketUrl(`${id}.${ext}`), 302);
+  // 2) mídia da era Evolution / legado: está no bucket, mas sem a marca no DB.
+  // Em vez de fazer 19 HEAD requests HTTP (que geram erros 400 no Supabase),
+  // buscamos o arquivo no bucket via list pelo ID da mensagem.
+  const { data: files } = await db.storage
+    .from("chat_media")
+    .list("", { search: id, limit: 1 });
+
+  if (files && files.length > 0 && files[0].name) {
+    const fileName = files[0].name;
+    // Marca na mensagem para evitar chamadas à storage em futuras requisições
+    db.from("zap_messages")
+      .update({ raw: { ...((row?.raw as object) ?? {}), media_stored: fileName } })
+      .eq("message_id", id)
+      .then(() => null);
+
+    return NextResponse.redirect(bucketUrl(fileName), {
+      status: 302,
+      headers: { "Cache-Control": "public, max-age=31536000, immutable" },
+    });
   }
 
   // 3) fallback: Evolution da conta dona da mensagem (o message_id é único no WhatsApp)

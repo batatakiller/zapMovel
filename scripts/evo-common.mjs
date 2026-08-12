@@ -124,6 +124,18 @@ export function extractReaction(data, instance = INSTANCE) {
   };
 }
 
+export function cleanRaw(data) {
+  if (!data || typeof data !== "object") return data;
+  const clone = JSON.parse(JSON.stringify(data));
+  if (clone.message && typeof clone.message === "object") {
+    delete clone.message.base64;
+    if (clone.message.imageMessage?.jpegThumbnail) delete clone.message.imageMessage.jpegThumbnail;
+    if (clone.message.videoMessage?.jpegThumbnail) delete clone.message.videoMessage.jpegThumbnail;
+    if (clone.message.stickerMessage?.jpegThumbnail) delete clone.message.stickerMessage.jpegThumbnail;
+  }
+  return clone;
+}
+
 export function normalizeUpsert(data, instance = INSTANCE) {
   const key = data?.key;
   const jid = canonicalJid(key);
@@ -142,7 +154,7 @@ export function normalizeUpsert(data, instance = INSTANCE) {
     status: key.fromMe ? normStatus(data.status ?? "sent") : "received",
     msg_timestamp: ts.toISOString(),
     quoted_message_id: extractQuotedId(data.message),
-    raw: data,
+    raw: cleanRaw(data),
   };
 }
 
@@ -218,16 +230,24 @@ export async function cacheMediaForRow(row) {
   const key = row.raw?.key;
   if (!key?.id) return;
 
-  // checa todas as extensões em paralelo (sequencial seria lento)
-  const alreadyCached = await Promise.any(
-    KNOWN_MEDIA_EXTENSIONS.map(async (ext) => {
-      const head = await fetch(bucketUrl(`${row.message_id}.${ext}`), { method: "HEAD", cache: "no-store" });
-      if (!head.ok) throw new Error("not found");
-    })
-  )
-    .then(() => true)
-    .catch(() => false);
-  if (alreadyCached) return;
+  if (row.raw?.media_stored) return;
+
+  // busca pelo id da mensagem na storage (1 consulta em vez de 19 HEAD requests HTTP)
+  const { data: files } = await supabase.storage
+    .from("chat_media")
+    .list("", { search: row.message_id, limit: 1 });
+
+  if (files && files.length > 0 && files[0].name) {
+    const fileName = files[0].name;
+    await supabase
+      .from("zap_messages")
+      .update({
+        raw: { ...(row.raw ?? {}), media_stored: fileName },
+      })
+      .eq("instance", row.instance)
+      .eq("message_id", row.message_id);
+    return;
+  }
 
   try {
     const cfg = await getEvolutionConfig(row.instance);
@@ -244,10 +264,21 @@ export async function cacheMediaForRow(row) {
 
     const mimetype = json.mimetype ?? "application/octet-stream";
     const buf = Buffer.from(json.base64, "base64");
+    const fileName = `${row.message_id}.${extFor(mimetype)}`;
     const { error } = await supabase.storage
       .from("chat_media")
-      .upload(`${row.message_id}.${extFor(mimetype)}`, buf, { contentType: mimetype, upsert: true });
-    if (error) console.error(`cacheMediaForRow(${row.message_id}): upload falhou:`, error.message);
+      .upload(fileName, buf, { contentType: mimetype, upsert: true });
+    if (error) {
+      console.error(`cacheMediaForRow(${row.message_id}): upload falhou:`, error.message);
+    } else {
+      await supabase
+        .from("zap_messages")
+        .update({
+          raw: { ...(row.raw ?? {}), media_stored: fileName, mime_type: mimetype },
+        })
+        .eq("instance", row.instance)
+        .eq("message_id", row.message_id);
+    }
   } catch (e) {
     console.error(`cacheMediaForRow(${row.message_id}):`, e.message);
   }

@@ -8,7 +8,9 @@
     "start": "next start",
     "bridge": "node scripts/bridge.mjs",
     "backfill": "node scripts/backfill.mjs",
-    "import": "node scripts/import-msgstore.mjs"
+    "import": "node scripts/import-msgstore.mjs",
+    "clean:messages": "node scripts/clean-old-messages.mjs",
+    "clean:media": "node scripts/clean-old-media.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.110.2",
