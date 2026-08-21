@@ -41,6 +41,12 @@ export async function POST(req: NextRequest) {
       .update({ status: "sent" })
       .eq("outbox_id", id)
       .then(() => null, () => null);
+  } else {
+    await db
+      .from("zap_messages")
+      .update({ status: "failed" })
+      .eq("outbox_id", id)
+      .then(() => null, () => null);
   }
 
   return NextResponse.json({ ok: true });

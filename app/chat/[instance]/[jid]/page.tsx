@@ -45,11 +45,17 @@ async function markAsRead(jid: string, instance: string, messages: ZapMessage[])
 
 function Ticks({ status }: { status: string }) {
   if (status === "pending") return <span title="enviando">🕓</span>;
+  if (status === "failed" || status === "erro")
+    return (
+      <span title="Falha no envio (sem notificação ativa no aparelho ou desconectado)" style={{ color: "#ef4444" }}>
+        ⚠️
+      </span>
+    );
   const color = status === "read" ? "var(--wa-check)" : "var(--wa-text-muted)";
   const double = status === "delivered" || status === "read";
   return (
     <span style={{ color, letterSpacing: "-0.35em" }} title={status}>
-      {double ? "✓✓" : "✓"}
+      ✓{double && "✓"}
     </span>
   );
 }
