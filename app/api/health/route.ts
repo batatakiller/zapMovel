@@ -26,7 +26,7 @@ export async function GET() {
 
   if (process.env.EVOLUTION_URL && process.env.EVOLUTION_APIKEY && process.env.EVOLUTION_INSTANCE) {
     try {
-      const res = await fetch(`${process.env.EVOLUTION_URL}/instance/info/${process.env.EVOLUTION_INSTANCE}`, {
+      const res = await fetch(`${process.env.EVOLUTION_URL}/instance/connectionState/${process.env.EVOLUTION_INSTANCE}`, {
         method: "GET",
         headers: { apikey: process.env.EVOLUTION_APIKEY },
       });
