@@ -60,7 +60,7 @@ def carregar_env():
                 elif k == "NEXT_PUBLIC_APP_URL" or k == "VERCEL_URL":
                     os.environ.setdefault("ZAP_API_URL", v)
 
-    os.environ.setdefault("ZAP_API_URL", "https://zapmovel.vercel.app")
+    os.environ.setdefault("ZAP_API_URL", "https://zapmovel.supersoftware.info")
     os.environ.setdefault("ZAP_INSTANCE", "tablet-loja")
 
     faltando = [k for k in ("ZAP_API_URL", "ZAP_API_TOKEN", "ZAP_INSTANCE") if not os.environ.get(k)]

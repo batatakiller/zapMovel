@@ -44,7 +44,7 @@ else
   read -r -s TOKEN
   if [ -z "$TOKEN" ]; then echo "token vazio, abortando"; exit 1; fi
   cat > "$ENV" <<FIM
-ZAP_API_URL=https://zapmovel.vercel.app
+ZAP_API_URL=https://zapmovel.supersoftware.info
 ZAP_API_TOKEN=$TOKEN
 ZAP_INSTANCE=tablet-loja
 FIM

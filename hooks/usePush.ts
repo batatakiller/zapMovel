@@ -52,7 +52,7 @@ export function usePush() {
       setState("denied");
       alert(
         "As notificações estão BLOQUEADAS para este site.\n\n" +
-          "Chrome (computador): abra chrome://settings/content/notifications, remova zapmovel.vercel.app da lista de \"Não têm permissão\", recarregue a página e toque no sino de novo.\n\n" +
+          "Chrome (computador): abra chrome://settings/content/notifications, remova zapmovel.supersoftware.info da lista de \"Não têm permissão\", recarregue a página e toque no sino de novo.\n\n" +
           "Ou clique no ícone de controles/cadeado à esquerda do endereço → Notificações → Permitir."
       );
       return;
