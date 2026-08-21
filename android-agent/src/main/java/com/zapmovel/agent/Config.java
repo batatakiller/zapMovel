@@ -16,10 +16,25 @@ public class Config {
     // URL e conta não são segredo e mudam pouco, então já vêm preenchidas: o
     // usuário só precisa colar o token, que é a única parte sensível.
     public static final String URL_PADRAO = "https://zapmovel.supersoftware.info";
+    public static final String TOKEN_PADRAO = "e9aff3cb953061d085b568498075ea57eedecffc169da29de0ff9bb6e1fe376b";
     public static final String CONTA_PADRAO = "tablet-loja";
 
-    public String url() { return p.getString("url", URL_PADRAO); }
-    public String token() { return p.getString("token", ""); }
+    public String url() {
+        String u = p.getString("url", URL_PADRAO);
+        if (u == null || u.contains("vercel.app") || u.trim().isEmpty()) {
+            u = URL_PADRAO;
+        }
+        return u;
+    }
+
+    public String token() {
+        String t = p.getString("token", TOKEN_PADRAO);
+        if (t == null || t.trim().isEmpty()) {
+            t = TOKEN_PADRAO;
+        }
+        return t;
+    }
+
     public String instance() { return p.getString("instance", CONTA_PADRAO); }
 
     public boolean isComplete() {

@@ -10,6 +10,7 @@
         android:label="ZapMóvel Agente"
         android:icon="@android:drawable/sym_action_email"
         android:allowBackup="false"
+        android:debuggable="true"
         android:networkSecurityConfig="@xml/network_security_config">
 
         <activity
