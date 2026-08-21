@@ -44,4 +44,4 @@ Backup Android (msgstore.db) ──scripts/import-msgstore.mjs──▶ Supabase
 
 ## No celular / PWA
 
-Acesse `https://zapmovel.vercel.app`, faça login e use "Adicionar à tela de início" (vira app com notificações e suporte a PWA).
+Acesse `https://zapmovel.supersoftware.info`, faça login e use "Adicionar à tela de início" (vira app com notificações e suporte a PWA).

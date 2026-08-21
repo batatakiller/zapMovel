@@ -21,8 +21,8 @@ Em **21/ago/2026**, o banco do ZapMóvel foi isolado e migrado para a instância
     * Postgres: `supabase-db-fqvwullaljkovvbzdbwckfci` (porta interna 5432)
     * API Gateway (Kong): `http://supabasekong-pegadado.147.15.99.72.sslip.io`
     * Realtime, GoTrue Auth, PostgREST e Studio integrados.
-* **Frontend (Vercel & Local):**
-  * Deploy de produção: `https://zapmovel.vercel.app` (projeto `batatakillers-projects/zapmovel`).
+* **Frontend / App (Coolify VPS):**
+  * Deploy de produção: `https://zapmovel.supersoftware.info` (Projeto `SuperSoftware`, container `zapmovel`).
   * Proxy `/db`: Configurado no `next.config.ts` para redirecionar chamadas do navegador (`/db/*`) para o Kong na VPS, evitando bloqueios de *Mixed Content* (HTTPS ➔ HTTP).
 
 ---

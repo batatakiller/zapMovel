@@ -22,7 +22,9 @@ Caixa unificada para múltiplas contas de WhatsApp via Evolution API v2 (e Andro
 
 ---
 
-## 🚀 Deploy
+## 🚀 Produção e Deploy (VPS Coolify)
 
-- **Vercel:** Projeto `zapmovel` (`batatakillers-projects`) → `https://zapmovel.vercel.app`.
-- **Deploy:** `npx vercel deploy --prod --yes` (a partir da raiz deste projeto).
+- **URL Oficial de Produção:** `https://zapmovel.supersoftware.info`
+- **Ambiente:** VPS Oracle (`147.15.99.72`), Coolify (Projeto `SuperSoftware`, aplicação `zapmovel`).
+- **Deploy:** Deploy automático via `git push origin main` (ou via API/painel do Coolify).
+- **Vercel:** Desativada permanentemente em favor do deploy local full-stack na VPS.
