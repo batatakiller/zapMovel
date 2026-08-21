@@ -145,9 +145,50 @@ export default function ChatPage({ params }: { params: Promise<{ instance: strin
     if (data) setMessages((data as ZapMessage[]).slice().reverse());
   }, [instance, jid]);
 
+  // Sincronização rápida em background (últimas 30 mensagens) para atualização contínua sem depender apenas de WebSocket
+  const syncRecent = useCallback(async () => {
+    const { data } = await supabaseBrowser()
+      .from("zap_messages")
+      .select("id,instance,remote_jid,message_id,from_me,push_name,type,content,status,msg_timestamp,quoted_message_id")
+      .eq("instance", instance)
+      .eq("remote_jid", jid)
+      .order("msg_timestamp", { ascending: false })
+      .limit(30);
+
+    if (!data || data.length === 0) return;
+
+    setMessages((prev) => {
+      const incoming = (data as ZapMessage[]).slice().reverse();
+      const map = new Map<string, ZapMessage>();
+      for (const m of prev) map.set(m.message_id, m);
+
+      let hasChanges = false;
+      for (const inc of incoming) {
+        const existing = map.get(inc.message_id);
+        if (!existing) {
+          map.set(inc.message_id, inc);
+          hasChanges = true;
+        } else if (
+          existing.status !== inc.status ||
+          existing.content !== inc.content ||
+          existing.type !== inc.type
+        ) {
+          map.set(inc.message_id, { ...existing, ...inc });
+          hasChanges = true;
+        }
+      }
+      if (!hasChanges) return prev;
+      return Array.from(map.values()).sort(
+        (a, b) => new Date(a.msg_timestamp).getTime() - new Date(b.msg_timestamp).getTime()
+      );
+    });
+  }, [instance, jid]);
+
   useEffect(() => {
     if (!ready) return;
     load();
+
+    // 1) WebSocket Realtime
     const channel = supabaseBrowser()
       .channel(`chat-${instance}-${jid}`)
       .on(
@@ -165,10 +206,29 @@ export default function ChatPage({ params }: { params: Promise<{ instance: strin
       )
       .subscribe();
 
+    // 2) Polling inteligente em background (a cada 2.5s na aba ativa)
+    const pollInterval = setInterval(() => {
+      if (document.visibilityState === "visible") {
+        syncRecent();
+      }
+    }, 2500);
+
+    // 3) Sincronização imediata ao focar ou retornar para a aba
+    const handleVisibilityOrFocus = () => {
+      if (document.visibilityState === "visible") {
+        syncRecent();
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibilityOrFocus);
+    window.addEventListener("focus", handleVisibilityOrFocus);
+
     return () => {
       supabaseBrowser().removeChannel(channel);
+      clearInterval(pollInterval);
+      document.removeEventListener("visibilitychange", handleVisibilityOrFocus);
+      window.removeEventListener("focus", handleVisibilityOrFocus);
     };
-  }, [ready, instance, jid, load]);
+  }, [ready, instance, jid, load, syncRecent]);
 
   useEffect(() => {
     if (messages.length > 0 && !readOnly) {
@@ -322,15 +382,20 @@ export default function ChatPage({ params }: { params: Promise<{ instance: strin
                       </p>
                     </div>
                   )}
-                  {(m.type === "image" || m.type === "sticker") && !m.message_id.startsWith("local-") && (
+                  {(m.type === "image" || m.type === "sticker" || (m.type === "text" && m.content?.startsWith("📷 Foto"))) && !m.message_id.startsWith("local-") && (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img
                       src={`/api/media?id=${encodeURIComponent(m.message_id)}&a=${encodeURIComponent(m.instance)}`}
                       alt="mídia"
                       loading="lazy"
-                      className="mb-1 max-h-80 w-auto max-w-full cursor-pointer rounded-md"
+                      className="mb-1 max-h-80 w-auto max-w-full cursor-pointer rounded-md transition-opacity duration-200"
                       onClick={(e) => window.open((e.target as HTMLImageElement).src, "_blank")}
-                      onError={(e) => ((e.target as HTMLImageElement).style.display = "none")}
+                      onError={(e) => {
+                        const img = e.target as HTMLImageElement;
+                        img.style.display = "none";
+                        const fb = img.parentElement?.querySelector(".media-fallback");
+                        if (fb) (fb as HTMLElement).style.display = "block";
+                      }}
                     />
                   )}
                   {m.type === "audio" && !m.message_id.startsWith("local-") && (
@@ -360,6 +425,18 @@ export default function ChatPage({ params }: { params: Promise<{ instance: strin
                     >
                       {m.content || "📄 Documento"}
                     </a>
+                  ) : m.type === "image" || m.type === "sticker" || (m.type === "text" && m.content?.startsWith("📷 Foto")) ? (
+                    <>
+                      {m.content && !["📷 Foto", "💟 Figurinha"].includes(m.content) ? (
+                        <p className="whitespace-pre-wrap break-words text-[15px]">
+                          {m.content.replace(/^📷 Foto( — )?/, "")}
+                        </p>
+                      ) : (
+                        <p className="media-fallback hidden whitespace-pre-wrap break-words text-[15px]">
+                          {m.content || "📷 Foto"}
+                        </p>
+                      )}
+                    </>
                   ) : (
                     <p className="whitespace-pre-wrap break-words text-[15px]">{m.content}</p>
                   )}

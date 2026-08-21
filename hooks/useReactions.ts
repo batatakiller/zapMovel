@@ -33,8 +33,24 @@ export function useReactions(instance: string, jid: string) {
         }
       )
       .subscribe();
+
+    const interval = setInterval(() => {
+      if (document.visibilityState === "visible") {
+        load();
+      }
+    }, 4000);
+
+    const handleFocus = () => {
+      if (document.visibilityState === "visible") load();
+    };
+    document.addEventListener("visibilitychange", handleFocus);
+    window.addEventListener("focus", handleFocus);
+
     return () => {
       supabaseBrowser().removeChannel(channel);
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", handleFocus);
+      window.removeEventListener("focus", handleFocus);
     };
   }, [instanceId, instance, jid, load]);
 

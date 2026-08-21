@@ -96,9 +96,46 @@ export default function ChatList() {
     setLoading(false);
   }, []);
 
+  const syncRecent = useCallback(async () => {
+    const { data } = await supabaseBrowser()
+      .from("zap_messages")
+      .select("id,instance,remote_jid,message_id,from_me,push_name,type,content,status,msg_timestamp")
+      .order("msg_timestamp", { ascending: false })
+      .limit(60);
+
+    if (!data || data.length === 0) return;
+
+    setMessages((prev) => {
+      const map = new Map<string, ZapMessage>();
+      for (const m of prev) map.set(m.message_id, m);
+
+      let hasChanges = false;
+      for (const inc of data as ZapMessage[]) {
+        const existing = map.get(inc.message_id);
+        if (!existing) {
+          map.set(inc.message_id, inc);
+          hasChanges = true;
+        } else if (
+          existing.status !== inc.status ||
+          existing.content !== inc.content ||
+          existing.type !== inc.type
+        ) {
+          map.set(inc.message_id, { ...existing, ...inc });
+          hasChanges = true;
+        }
+      }
+      if (!hasChanges) return prev;
+      return Array.from(map.values()).sort(
+        (a, b) => new Date(b.msg_timestamp).getTime() - new Date(a.msg_timestamp).getTime()
+      );
+    });
+  }, []);
+
   useEffect(() => {
     if (!ready) return;
     load();
+
+    // 1) WebSocket Realtime
     const channel = supabaseBrowser()
       .channel("chat-list")
       .on("postgres_changes", { event: "*", schema: "public", table: "zap_messages" }, (payload) => {
@@ -121,10 +158,29 @@ export default function ChatList() {
       })
       .subscribe();
 
+    // 2) Polling inteligente em background (a cada 3s)
+    const pollInterval = setInterval(() => {
+      if (document.visibilityState === "visible") {
+        syncRecent();
+      }
+    }, 3000);
+
+    // 3) Sincronização ao retornar para a janela / aba
+    const handleFocus = () => {
+      if (document.visibilityState === "visible") {
+        syncRecent();
+      }
+    };
+    document.addEventListener("visibilitychange", handleFocus);
+    window.addEventListener("focus", handleFocus);
+
     return () => {
       supabaseBrowser().removeChannel(channel);
+      clearInterval(pollInterval);
+      document.removeEventListener("visibilitychange", handleFocus);
+      window.removeEventListener("focus", handleFocus);
     };
-  }, [ready, load]);
+  }, [ready, load, syncRecent]);
 
   // busca por nome, telefone ou conteúdo no histórico inteiro
   useEffect(() => {
