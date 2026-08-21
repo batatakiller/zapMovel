@@ -62,6 +62,26 @@ public class WaNotificationListener extends NotificationListenerService {
     private MediaUploader uploader;
     private java.util.concurrent.ScheduledExecutorService agenda;
 
+    public void atualizarNotificacoesAtivas() {
+        try {
+            StatusBarNotification[] active = getActiveNotifications();
+            if (active != null) {
+                for (StatusBarNotification sbn : active) {
+                    final String pkg = sbn.getPackageName();
+                    if (!WA_BUSINESS.equals(pkg) && !WA_NORMAL.equals(pkg)) continue;
+                    Notification n = sbn.getNotification();
+                    if (n == null || (n.flags & Notification.FLAG_GROUP_SUMMARY) != 0) continue;
+                    String jid = n.getShortcutId();
+                    if (jid != null && !jid.isEmpty()) {
+                        ReplyRegistry.registrar(jid, n);
+                    }
+                }
+            }
+        } catch (Throwable t) {
+            Log.w(Sender.TAG, "falha ao sincronizar notificações ativas: " + t.getMessage());
+        }
+    }
+
     @Override public void onCreate() {
         super.onCreate();
         cfg = new Config(this);
@@ -75,6 +95,7 @@ public class WaNotificationListener extends NotificationListenerService {
         agenda = java.util.concurrent.Executors.newSingleThreadScheduledExecutor();
         agenda.scheduleWithFixedDelay(() -> {
             try {
+                atualizarNotificacoesAtivas();
                 poller.ciclo();
             } catch (Throwable t) {
                 Log.w(Sender.TAG, "ciclo abortou: " + t.getMessage());
@@ -89,6 +110,7 @@ public class WaNotificationListener extends NotificationListenerService {
 
     @Override public void onListenerConnected() {
         Log.i(Sender.TAG, "listener conectado ao sistema");
+        atualizarNotificacoesAtivas();
     }
 
     @Override public void onNotificationPosted(StatusBarNotification sbn) {
