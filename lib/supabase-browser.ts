@@ -6,8 +6,13 @@ let client: SupabaseClient | null = null;
 
 export function supabaseBrowser(): SupabaseClient {
   if (!client) {
+    const url =
+      typeof window === "undefined"
+        ? process.env.NEXT_PUBLIC_SUPABASE_URL!
+        : `${window.location.origin}/db`;
+
     client = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      url,
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
     );
   }

@@ -1,29 +1,29 @@
 # ZapMóvel
 
-Suas várias contas de WhatsApp em um só lugar (via Evolution API v2) — Next.js + Supabase Realtime, instalável no celular como PWA. Suporta **múltiplos números ao vivo** e **importação de backups do Android** para não perder conversas de aparelhos formatados.
+Suas várias contas de WhatsApp em um só lugar (via Evolution API v2) — Next.js + Supabase Realtime (Self-Hosted na VPS), instalável no celular como PWA. Suporta **múltiplos números ao vivo** e **importação de backups do Android** para não perder conversas de aparelhos formatados.
 
 ## Arquitetura
 
 ```
-Evolution API (N instâncias) ─(websocket/polling)─▶ bridge (multi-conta) ─▶ Supabase (zap_messages)
+Evolution API (N instâncias) ─(websocket/polling)─▶ bridge (multi-conta) ─▶ Supabase VPS (zap_messages)
                                                                                │ Realtime
-App Next.js (PWA, caixa unificada) ◀────────────────────────────────────────────┘
+App Next.js (PWA, caixa unificada) ◀───────────────────────────────────────────┘
 App ──POST /api/send {instance}──▶ Evolution REST (apikey só no servidor)
-Backup Android (msgstore.db) ──scripts/import-msgstore.mjs──▶ Supabase (conta de arquivo)
+Backup Android (msgstore.db) ──scripts/import-msgstore.mjs──▶ Supabase VPS (conta de arquivo)
 ```
 
 - Cada número é uma **conta** (`zap_accounts`): `live` (conectada via Evolution/QR) ou `archive` (histórico importado, só leitura). Tudo aparece numa caixa unificada com etiqueta/cor por conta.
-- A coluna `instance` de `zap_messages` identifica a conta; a unicidade `(instance, message_id)` isola cada número.
-- O webhook do Evolution **continua apontando para o n8n** (bot intacto). O app recebe mensagens pelo bridge.
-- `app/api/webhook` existe como alternativa para produção: aponte o webhook do Evolution para ele e defina `WEBHOOK_FORWARD_URL` que o payload é reenviado ao n8n (o bot continua funcionando).
+- O banco de dados roda em uma instância **Supabase Self-Hosted na VPS** (`147.15.99.72`), garantindo tráfego e armazenamento ilimitados para o histórico de conversas.
+- Veja a documentação detalhada da infraestrutura em [docs/BANCO-DADOS-VPS.md](docs/BANCO-DADOS-VPS.md).
 
-## Para rodar (primeira vez)
+## Para rodar (Desenvolvimento Local)
 
-1. **Criar as tabelas** — cole, nesta ordem, [supabase/migration.sql](supabase/migration.sql), [supabase/migration-multi.sql](supabase/migration-multi.sql) e [supabase/migration-account-secrets.sql](supabase/migration-account-secrets.sql) no SQL Editor do Supabase e execute cada um.
-2. **Anon key** — copie em Dashboard → Settings → API Keys → `anon public` e cole em `.env.local` na variável `NEXT_PUBLIC_SUPABASE_ANON_KEY`.
-3. **Criar seu login**: `node scripts/create-user.mjs seu@email.com SuaSenhaForte`
-4. **Importar histórico** (opcional): `npm run backfill` (todas as contas ao vivo; `PAGES=100` para mais histórico)
-5. Em dois terminais:
+1. **Variáveis de ambiente** — configure em `.env.local` as chaves do Supabase VPS e da Evolution API (veja [docs/BANCO-DADOS-VPS.md](docs/BANCO-DADOS-VPS.md)).
+2. **Criar login de usuário** (se necessário):
+   ```bash
+   node scripts/create-user.mjs seu@email.com SuaSenhaForte
+   ```
+3. Em dois terminais:
    ```bash
    npm run dev      # interface em http://localhost:3000
    npm run bridge   # sincroniza todas as contas em tempo real
@@ -34,7 +34,7 @@ Backup Android (msgstore.db) ──scripts/import-msgstore.mjs──▶ Supabase
 - **Adicionar um número ao vivo:** no app, ícone 👤 → "Adicionar um WhatsApp", escaneie o QR. O bridge detecta a conta nova automaticamente (a cada 30s, sem reiniciar).
 - **Importar backup de aparelho antigo:** veja [docs/IMPORTAR-BACKUP.md](docs/IMPORTAR-BACKUP.md) — `npm run import -- ./msgstore.db --instance zap-antigo --media "/caminho/WhatsApp"`.
 - **Número em outro servidor Evolution:** por padrão toda conta usa o servidor Evolution do `.env.local`. Se um número específico mora em outro servidor (outra VPS/Coolify), abra "⚙️ Avançado" no formulário de criação (ou o ✏️ de uma conta já criada) e informe a URL + apikey daquele servidor — fica salvo só no banco, nunca exposto ao navegador.
-- **Conta cujo webhook já aponta para outro bot (n8n etc.):** a Vercel é serverless — só recebe mensagens via webhook. Se uma conta já tem webhook configurado para outro destino (um bot de negócio já em produção), trocar esse webhook arriscaria quebrar esse bot. A solução é rodar o bridge como serviço persistente no mesmo VPS/Coolify que hospeda o Evolution — veja [docs/BRIDGE-COOLIFY.md](docs/BRIDGE-COOLIFY.md). Ele sincroniza via WebSocket/polling sem tocar em nenhum webhook existente.
+- **Conta cujo webhook já aponta para outro bot (n8n etc.):** veja [docs/BRIDGE-COOLIFY.md](docs/BRIDGE-COOLIFY.md). Ele sincroniza via WebSocket/polling sem tocar em nenhum webhook existente.
 
 ## Mídia
 
@@ -42,16 +42,6 @@ Backup Android (msgstore.db) ──scripts/import-msgstore.mjs──▶ Supabase
 - **Enviar fotos**: botão 📎 na conversa. A imagem é comprimida no navegador (máx. 1600px, JPEG 82%) antes do upload — evita o limite de 4,5MB do body na Vercel — e sai via `POST /message/sendMedia` do Evolution. O texto digitado no campo vira legenda.
 - Áudio/vídeo/documento aparecem como rótulo (🎤 Áudio etc.) por enquanto.
 
-## Latência
+## No celular / PWA
 
-O bridge tenta WebSocket primeiro. Como o servidor Evolution está com `WEBSOCKET_ENABLED=false`, ele cai no **polling a cada 3s** (delay máximo ~3s). Para tempo real instantâneo (<300ms), no Coolify do servidor Evolution defina:
-
-```
-WEBSOCKET_ENABLED=true
-```
-
-e reinicie o container — o bridge detecta e troca para websocket sozinho.
-
-## No celular
-
-Na mesma rede Wi-Fi: acesse `http://IP_DO_MAC:3000`, faça login e use "Adicionar à tela de início" (vira app). Para usar fora de casa: deploy na Vercel (UI + `/api/*`) e rode o bridge em qualquer VPS (ex.: o mesmo Coolify do Evolution) — ou mude o webhook do Evolution para `https://seuapp.vercel.app/api/webhook` com `WEBHOOK_FORWARD_URL` apontando para o n8n.
+Acesse `https://zapmovel.vercel.app`, faça login e use "Adicionar à tela de início" (vira app com notificações e suporte a PWA).
